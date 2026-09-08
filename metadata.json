@@ -1,0 +1,6 @@
+{
+  "name": "Comic Translator",
+  "description": "Cooperative human-machine workspace for translating comics and manga with interactive canvas overlay, sliding window caching, text detection, and custom inpainting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
