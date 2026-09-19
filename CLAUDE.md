@@ -79,11 +79,41 @@ rather than implying a pipeline was tested.
 
 ```
 npm install
-npm run dev      # tsx server.ts, listens on :3000  (being retired)
-npm run lint     # tsc --noEmit
-npm run build    # vite build + esbuild bundle of server.ts
-npm start        # node dist/server.cjs
+npm run dev            # tsx server.ts, listens on :3000  (being retired)
+npm run lint           # tsc --noEmit
+npm run build          # vite build + esbuild bundle of server.ts
+npm start              # node dist/server.cjs
+npm run test:detector  # runs BubbleDetector in a real browser
 ```
+
+`test:detector` needs Playwright, which is deliberately not a dependency
+because installing it pulls down a browser: `npm i -D playwright && npx
+playwright install chromium`. In this container a browser is already present,
+so run it as `CHROMIUM_PATH=/opt/pw-browsers/chromium npm run test:detector`
+and never run `playwright install`.
+
+Installing `@huggingface/transformers` here needs `--ignore-scripts`: its
+`onnxruntime-node` dependency downloads a native binary in a postinstall step
+and the egress proxy blocks that host. The binary is only used when
+Transformers.js runs under Node, and this app runs it in the browser.
+
+## Engine layer
+
+`src/engine/` is the seam between the app and whatever does the translating.
+`TranslationEngine` in `src/engine/types.ts` is the whole contract; the app
+must not reach past it into a provider.
+
+- `ai/` — hosted models. `provider.ts` is the shape a provider implements,
+  `gemini.ts` is one, and `AI_PROVIDERS` in `ai/index.ts` is what fills the
+  platform dropdown. Adding a provider is a new file plus a line in that list.
+  Requests go straight from the user's device with the key they pasted.
+- `offline/` — on-device. `bubbleDetector.ts` finds regions, Transformers.js
+  reads and translates them. `TextRegionDetector` is an interface so a trained
+  ONNX detector can replace the classical one without touching the engine.
+
+Engines never fabricate. A failure throws `EngineError` with a code; a region
+the model skipped is left empty so the UI shows the original text. Do not add
+a fallback that returns invented regions or translations.
 
 ## Known landmines
 
