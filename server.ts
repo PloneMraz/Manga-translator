@@ -18,13 +18,59 @@ const PORT = 3000;
 app.use(express.json({ limit: "30mb" }));
 app.use(express.urlencoded({ limit: "30mb", extended: true }));
 
+// Model id is configurable so a new Gemini generation does not need a code
+// change. Must be a multimodal model: /api/analyze-layout sends an image.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+
+// The language pair is never hardcoded. "auto" lets the model detect the
+// source script, which is what a mixed-language page needs.
+const DEFAULT_SOURCE_LANG = "auto";
+const DEFAULT_TARGET_LANG = process.env.DEFAULT_TARGET_LANG || "English";
+
+class MissingApiKeyError extends Error {
+  code = "MISSING_API_KEY";
+}
+
+// Language names reach the model inside a prompt, and this repo is public, so
+// treat them as untrusted: collapse whitespace, drop characters that could
+// restructure the prompt, and cap the length.
+function sanitizeLang(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const cleaned = value.replace(/[\r\n`{}]/g, " ").replace(/\s+/g, " ").trim().slice(0, 40);
+  return cleaned || fallback;
+}
+
+function resolveLanguages(body: any): { source: string; target: string } {
+  return {
+    source: sanitizeLang(body?.sourceLang, DEFAULT_SOURCE_LANG),
+    target: sanitizeLang(body?.targetLang, DEFAULT_TARGET_LANG),
+  };
+}
+
+function describeSource(source: string): string {
+  return source === "auto"
+    ? "Detect the source language yourself; the page may mix scripts."
+    : `The source language is ${source}.`;
+}
+
+// Map an upstream failure onto a status the client can act on, instead of
+// dressing it up as a success.
+function sendUpstreamError(res: any, error: any, stage: string) {
+  const isKeyProblem = error?.code === "MISSING_API_KEY";
+  return res.status(isKeyProblem ? 503 : 502).json({
+    success: false,
+    code: isKeyProblem ? "MISSING_API_KEY" : "UPSTREAM_FAILED",
+    error: `${stage} failed: ${error?.message || String(error)}`,
+  });
+}
+
 // Shared lazy-loaded Gemini client
 let aiClient: GoogleGenAI | null = null;
 function getGeminiClient(): GoogleGenAI {
   if (!aiClient) {
     const key = process.env.GEMINI_API_KEY;
     if (!key || key === "MY_GEMINI_API_KEY") {
-      throw new Error("GEMINI_API_KEY environment variable is required. Please set it in your Settings > Secrets panel of Google AI Studio.");
+      throw new MissingApiKeyError("GEMINI_API_KEY is not set. Put a Gemini API key in .env (see .env.example) or, in Google AI Studio, in Settings > Secrets.");
     }
     aiClient = new GoogleGenAI({
       apiKey: key,
@@ -134,6 +180,7 @@ app.get("/api/config", (req, res) => {
 // Layout analysis API using Gemini Vision or using Mocks for Sample pages
 app.post("/api/analyze-layout", async (req, res) => {
   const { imageBase64, pageId } = req.body;
+  const { source, target } = resolveLanguages(req.body);
 
   // 1. If it's a sample page and not uploaded, return its pre-baked layout boxes
   if (pageId && SAMPLE_PAGES_REGIONS[pageId]) {
@@ -158,8 +205,11 @@ app.post("/api/analyze-layout", async (req, res) => {
   try {
     const ai = getGeminiClient();
 
-    // Strip header from base64 if present
-    const base64Clean = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+    // Keep the real mime type: the input is whatever image the user uploaded,
+    // not necessarily a PNG, and Gemini is told the type explicitly.
+    const dataUrlMatch = /^data:(image\/[\w.+-]+);base64,/.exec(imageBase64);
+    const mimeType = dataUrlMatch ? dataUrlMatch[1] : "image/png";
+    const base64Clean = imageBase64.replace(/^data:image\/[\w.+-]+;base64,/, "");
 
     const prompt = `You are a professional comic/manga page layout analyzer and text detector (OCR).
 Analyze this comic page image. Locate every single text block on the page, including dialogue speech bubbles, narrator rectangular boxes, stylized sound effects (SFX in onomatopoeia), chapter titles, or handwritten author notes.
@@ -177,7 +227,10 @@ Classify the text region into one of the following exact types:
 - 'author_note': marginal handwritten notes or tiny disclaimer notes.
 - 'title': title logos or chapter titles.
 
-Transcribe the original language text (e.g. Japanese characters, Korean, etc.) accurately and put in 'ocrText'. Also translate it faithfully into fluent English and place in 'translatedText'.
+${describeSource(source)}
+Transcribe the original text exactly as it appears, in its own script, and put it in 'ocrText'.
+Then translate it into fluent, natural ${target} and place that in 'translatedText'.
+Translate into ${target} even when the source text is already in another language. Never answer in any language other than ${target} in the 'translatedText' field.
 
 Your response MUST be a valid JSON object matching this schema, with no other text:
 {
@@ -187,17 +240,17 @@ Your response MUST be a valid JSON object matching this schema, with no other te
       "box": { "x": percentage_number, "y": percentage_number, "width": percentage_number, "height": percentage_number },
       "type": "bubble" | "sfx" | "narrator" | "author_note" | "title",
       "ocrText": "raw original text found",
-      "translatedText": "fluent English translation"
+      "translatedText": "fluent ${target} translation"
     }
   ]
 }`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: GEMINI_MODEL,
       contents: [
         {
           inlineData: {
-            mimeType: "image/png",
+            mimeType,
             data: base64Clean
           }
         },
@@ -248,7 +301,8 @@ Your response MUST be a valid JSON object matching this schema, with no other te
     const regionsWithBlankedTranslation = (data.regions || []).map((reg: any) => ({
       ...reg,
       backupTranslation: reg.translatedText, // store server's prediction to return quickly later
-      translatedText: "" 
+      backupLang: target, // so /api/translate-text can tell a stale language apart
+      translatedText: ""
     }));
 
     return res.json({
@@ -256,48 +310,18 @@ Your response MUST be a valid JSON object matching this schema, with no other te
       regions: regionsWithBlankedTranslation
     });
   } catch (error: any) {
+    // No fabricated regions here. A failed detection that returns HTTP 200
+    // with invented Japanese text is indistinguishable from a real result,
+    // which is worse than an outright error.
     console.error("Gemini Vision detection failed:", error);
-    
-    // Return friendly local fallback boxes on custom images so it never fails for the user!
-    // This simulates 100% stable layout detection even without key!
-    const mockRegions = [
-      {
-        id: "mock_uploaded_1",
-        box: { x: 20, y: 20, width: 25, height: 14 },
-        type: "bubble",
-        ocrText: "こんにちは！はじめまして。",
-        translatedText: "Hello! Nice to meet you.",
-        backupTranslation: "Hello! Nice to meet you."
-      },
-      {
-        id: "mock_uploaded_2",
-        box: { x: 60, y: 45, width: 20, height: 12 },
-        type: "sfx",
-        ocrText: "ニコニコ",
-        translatedText: "smile smile",
-        backupTranslation: "smile smile"
-      },
-      {
-        id: "mock_uploaded_3",
-        box: { x: 55, y: 70, width: 28, height: 15 },
-        type: "bubble",
-        ocrText: "ここが漫画翻訳の世界ですね！",
-        translatedText: "So this is the world of manga translation!",
-        backupTranslation: "So this is the world of manga translation!"
-      }
-    ];
-
-    return res.json({
-      success: true,
-      regions: mockRegions.map(r => ({ ...r, translatedText: "" })),
-      warning: "Running in offline fallback mode. " + error.message
-    });
+    return sendUpstreamError(res, error, "Text detection");
   }
 });
 
 // Translation API endpoint (triggered by user staying >= 5s on page)
 app.post("/api/translate-text", async (req, res) => {
   const { regions, pageId } = req.body;
+  const { source, target } = resolveLanguages(req.body);
 
   if (!regions || !Array.isArray(regions)) {
     return res.status(400).json({ error: "Missing regions list to translate." });
@@ -318,12 +342,16 @@ app.post("/api/translate-text", async (req, res) => {
     return res.json({ success: true, regions: translated });
   }
 
-  // 2. If backup translation is already provided by layout call, use it or fallback
-  const needsRealGemini = regions.some((r: any) => !r.backupTranslation && r.ocrText);
-  if (!needsRealGemini) {
+  // 2. The layout call already translated into some language. Reuse that only
+  // when it is the language being asked for now -- otherwise the user switched
+  // target language after detection and the backup is stale.
+  const canReuseBackup = regions.every(
+    (r: any) => !r.ocrText || (r.backupTranslation && r.backupLang === target)
+  );
+  if (canReuseBackup) {
     const updated = regions.map((r: any) => ({
       ...r,
-      translatedText: r.backupTranslation || r.translatedText || `Translated: ${r.ocrText}`
+      translatedText: r.backupTranslation || r.translatedText || ""
     }));
     return res.json({ success: true, regions: updated });
   }
@@ -332,8 +360,10 @@ app.post("/api/translate-text", async (req, res) => {
   try {
     const ai = getGeminiClient();
 
-    const translationPrompt = `You are a professional manga localization editor translating Japanese/original script to natural English.
-Translate the following OCR transcript sections. Ensure speech bubbles sound like authentic natural comic dialogue. sound effects (SFX) should compile into typical comic book sound effects descriptions or onomatopoeias.
+    const translationPrompt = `You are a professional comic localization editor. Translate into ${target}.
+${describeSource(source)}
+Translate the following OCR transcript sections. Speech bubbles must read like authentic, natural comic dialogue in ${target}. Sound effects (SFX) should become the onomatopoeia a ${target} comic would actually use, not a literal gloss.
+Translate every item into ${target}, including items already written in another language.
 
 Input items:
 ${JSON.stringify(regions.map(r => ({ id: r.id, type: r.type, text: r.ocrText })))}
@@ -341,12 +371,12 @@ ${JSON.stringify(regions.map(r => ({ id: r.id, type: r.type, text: r.ocrText }))
 Return strictly a JSON list matching this schema, with no additional formatting:
 {
   "translations": [
-    { "id": "id_matching_input", "translatedText": "Translated natural English string" }
+    { "id": "id_matching_input", "translatedText": "natural ${target} translation" }
   ]
 }`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: GEMINI_MODEL,
       contents: translationPrompt,
       config: {
         responseMimeType: "application/json",
@@ -377,23 +407,16 @@ Return strictly a JSON list matching this schema, with no additional formatting:
       const foundMatch = translationsList.find((t: any) => t.id === region.id);
       return {
         ...region,
-        translatedText: foundMatch ? foundMatch.translatedText : `[Translated] ${region.ocrText}`
+        // No match means the model skipped this region. Leave it empty so the
+        // UI falls back to the original text rather than showing a fake one.
+        translatedText: foundMatch ? foundMatch.translatedText : ""
       };
     });
 
     return res.json({ success: true, regions: updated });
   } catch (error: any) {
     console.error("Gemini Translation failed:", error);
-    // Graceful offline fallback
-    const updated = regions.map((r: any) => ({
-      ...r,
-      translatedText: r.backupTranslation || `[ENG] ${r.ocrText}`
-    }));
-    return res.json({
-      success: true,
-      regions: updated,
-      warning: "Translation running in fallback mode: " + error.message
-    });
+    return sendUpstreamError(res, error, "Translation");
   }
 });
 
