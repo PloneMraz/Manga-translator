@@ -4,6 +4,7 @@
  */
 
 import type { BoundingBox } from '../../types';
+import { context2d, createCanvas, loadImage as decodeImage } from '../../lib/image';
 import { EngineError, type EngineImage } from '../types';
 
 export interface DetectedBox {
@@ -211,23 +212,15 @@ async function rasterize(image: EngineImage): Promise<Raster> {
   const width = Math.max(1, Math.round(bitmap.width * scale));
   const height = Math.max(1, Math.round(bitmap.height * scale));
 
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (!context) {
-    throw new EngineError('UNSUPPORTED', 'This browser would not give us a 2D canvas to read the page with.');
-  }
+  const canvas = createCanvas(width, height);
+  const context = context2d(canvas, { willReadFrequently: true });
   context.drawImage(bitmap, 0, 0, width, height);
   return { data: context.getImageData(0, 0, width, height).data, width, height };
 }
 
+/** Re-thrown as an EngineError so callers see one error type from the engine. */
 export function loadImage(dataUrl: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const element = new Image();
-    element.onload = () => resolve(element);
-    element.onerror = () =>
-      reject(new EngineError('UNSUPPORTED', 'That file could not be decoded as an image.'));
-    element.src = dataUrl;
+  return decodeImage(dataUrl).catch((error) => {
+    throw new EngineError('UNSUPPORTED', String(error instanceof Error ? error.message : error));
   });
 }

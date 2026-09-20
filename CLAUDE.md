@@ -84,6 +84,8 @@ npm run lint           # tsc --noEmit
 npm run build          # vite build + esbuild bundle of server.ts
 npm start              # node dist/server.cjs
 npm run test:detector  # runs BubbleDetector in a real browser
+npm run test:render    # renders a page and checks the result, in a browser
+npm test               # both browser tests
 ```
 
 `test:detector` needs Playwright, which is deliberately not a dependency
@@ -115,6 +117,22 @@ Engines never fabricate. A failure throws `EngineError` with a code; a region
 the model skipped is left empty so the UI shows the original text. Do not add
 a fallback that returns invented regions or translations.
 
+## Output layer
+
+`src/output/` turns an approved page into a file on disk.
+
+- `renderPage.ts` — draws the page at source resolution, covers each approved
+  region with a colour sampled from the page itself, and sets the translation
+  in it. Bubbles are filled and fitted as ellipses, not rectangles: a
+  rectangular patch cuts a bubble's outline off, and text laid out to the
+  bounding box crosses it. Words are never split to justify a larger font.
+- `destination.ts` — one upload is one session, one folder. Pages are handed
+  over as they are approved. Writes into a folder the user picked through the
+  File System Access API, and falls back to one download per page. Never zips.
+
+Both are covered by browser tests. Keep them passing: they are the only thing
+in this repository that proves the output is real.
+
 ## Known landmines
 
 Verified by running the toolchain, not by reading alone.
@@ -132,8 +150,9 @@ Verified by running the toolchain, not by reading alone.
 - The UI has no responsive breakpoints at all, and the fixed 66px toolbar
   plus 360px properties panel exceed a phone's width on their own. The
   layout needs rebuilding for the Android shell, not tweaking.
-- Export and inpainting are still simulated. The download is a hardcoded SVG
-  served under a `.png` filename.
+- The Export button still calls the old simulated path and downloads a
+  hardcoded SVG under a `.png` filename. `src/output/` replaces it and works;
+  nothing calls it yet.
 - The three built-in sample pages are `div`s pretending to be comic panels.
   They are dead weight once real images are the input; delete them with the
   client rework.

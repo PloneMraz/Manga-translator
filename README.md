@@ -22,6 +22,11 @@ This is an honest read of where the code is, so nobody wastes an evening.
 - `BubbleDetector` — finds speech bubbles with no model download at all.
   Tested in a real browser: 3 of 3 bubbles at IoU 0.97–0.98, no false
   regions, ~110 ms on an 800×1200 page. Run `npm run test:detector`.
+- `src/output/` — renders a page with its translations set in place, at the
+  source resolution, and writes each approved page into the output folder.
+  Tested in a real browser: the original text is gone, the translation is
+  drawn, the artwork is byte-identical, and regions the user did not approve
+  are untouched. Run `npm run test:render`.
 
 **Written but never executed:**
 
@@ -32,11 +37,10 @@ This is an honest read of where the code is, so nobody wastes an evening.
 
 **Does not work:**
 
-- **Export is fake.** The current download hands you a hardcoded SVG saying
-  `COMIC TRANSLATION OUT`, saved under a `.png` name. It has nothing to do
-  with your page. This is the single biggest gap.
-- **The UI is not connected to the engine layer.** The interface still talks
-  to the Express server that is being retired.
+- **The UI is not connected to any of this.** The interface still talks to
+  the Express server that is being retired, and its Export button still hands
+  you a hardcoded SVG saying `COMIC TRANSLATION OUT` under a `.png` name. The
+  renderer that replaces it works; nothing calls it yet.
 - The three built-in "sample pages" are `div`s drawn to look like comic
   panels. There is no manga in this repository.
 - There is no desktop build and no Android build yet.
@@ -149,6 +153,8 @@ npm run dev          # http://localhost:3000
 | `npm run build` | Production bundle |
 | `npm start` | Serve the production build |
 | `npm run test:detector` | Run `BubbleDetector` in a real browser |
+| `npm run test:render` | Render a page and check the result, in a real browser |
+| `npm test` | Both of the above |
 
 `npm run dev` and `npm start` still go through `server.ts`, which is on its
 way out. They will disappear once the UI talks to the engine layer directly.
@@ -195,11 +201,17 @@ src/
 │   └── offline/
 │       ├── bubbleDetector.ts   classical detection, no download
 │       └── index.ts            Transformers.js OCR + translation
+├── output/              rendering approved pages and writing them out
+│   ├── renderPage.ts    cover the original, set the translation, encode
+│   ├── destination.ts   a folder you picked, or one download per page
+│   └── index.ts         folder and file naming
+├── lib/image.ts         shared canvas helpers
 ├── components/          the interface (still the old prototype)
 ├── types.ts             Page and Region
 └── App.tsx              state and workflow
 tests/
-└── bubble-detector.mjs  browser test for the detector
+├── bubble-detector.mjs  browser test for the detector
+└── render-page.mjs      browser test for the renderer
 server.ts                Express + Gemini — being retired
 ```
 
@@ -219,12 +231,11 @@ precisely the behaviour this rule exists to prevent.
 
 In the order it is being built:
 
-1. **Real export.** Draw the page to a canvas, cover the original text, set
-   the translation, write the file. This is what turns the project from a
-   prototype into a tool — it makes the app useful even if you type every
-   translation yourself.
-2. **Wire the UI to the engine layer.** Engine picker, provider dropdown, key
-   field, language selectors. Retire `server.ts`.
+1. ~~**Real export.**~~ Done: `src/output/` renders and writes pages.
+2. **Wire the UI to the engine and output layers.** Engine picker, provider
+   dropdown, key field, language selectors, and the Export button pointed at
+   the real renderer. Retire `server.ts`. This is what makes the work above
+   reachable from the interface.
 3. **A trained region detector**, exported to ONNX, so sound effects are
    found too.
 4. **Desktop build** (Tauri) and **Android build** (WebView shell), from the
