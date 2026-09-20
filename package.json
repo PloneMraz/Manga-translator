@@ -10,7 +10,9 @@
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test:detector": "node tests/bubble-detector.mjs"
+    "test:detector": "node tests/bubble-detector.mjs",
+    "test:render": "node tests/render-page.mjs",
+    "test": "npm run test:detector && npm run test:render"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
