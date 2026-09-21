@@ -15,7 +15,10 @@
     "test:detector": "node tests/bubble-detector.mjs",
     "test:render": "node tests/render-page.mjs",
     "test": "npm run test:detector && npm run test:render && npm run test:app",
-    "test:app": "node tests/app-flow.mjs"
+    "test:app": "node tests/app-flow.mjs",
+    "sync:ort": "node scripts/sync-ort.mjs",
+    "predev": "node scripts/sync-ort.mjs",
+    "prebuild": "node scripts/sync-ort.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

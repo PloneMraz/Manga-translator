@@ -58,6 +58,14 @@ export const OCR_MODEL = 'onnx-community/manga-ocr-base-ONNX';
 export const TRANSLATION_MODEL = 'Xenova/opus-mt-ja-en';
 
 /**
+ * Where the reader looks for manga-ocr unless told otherwise: a path served
+ * by the app itself. The desktop and Android shells bundle the model there,
+ * so they never reach the network for it; the browser build is the only one
+ * that has to fetch it, and caches it after the first time.
+ */
+export const DEFAULT_OCR_MODEL_URL = '/models/manga-ocr';
+
+/**
  * What this engine can actually do. manga-ocr reads Japanese and nothing
  * else, and opus-mt-ja-en translates Japanese into English and nothing else,
  * so the engine refuses other pairs rather than returning something wrong.
@@ -80,6 +88,8 @@ export interface OfflineEngineOptions {
    * Transformers.js pipeline -- see the note on OCR_MODEL.
    */
   ocrModelUrl?: string;
+  /** Set false to require an explicit ocrModelUrl instead of the bundled path. */
+  useBundledOcrModel?: boolean;
   /** 'webgpu' is far faster where it exists; 'wasm' works everywhere. */
   device?: 'webgpu' | 'wasm';
   /** Quantization. Smaller is lighter; q8 is the sensible default. */
@@ -147,9 +157,12 @@ export class OfflineEngine implements TranslationEngine {
     try {
       // manga-ocr runs through MangaOcrReader, not a pipeline: its BERT
       // decoder has no merged form for Transformers.js to load.
-      if (this.options.ocrModelUrl) {
+      const ocrUrl =
+        this.options.ocrModelUrl ??
+        (this.options.useBundledOcrModel === false ? undefined : DEFAULT_OCR_MODEL_URL);
+      if (ocrUrl) {
         this.reader = new MangaOcrReader({
-          modelUrl: this.options.ocrModelUrl,
+          modelUrl: ocrUrl,
           executionProviders: device === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'],
         });
         await this.reader.load(onProgress);
