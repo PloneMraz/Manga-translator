@@ -4,6 +4,11 @@ Guidance for Claude Code when working in this repository.
 
 ## Workflow rules
 
+**Work on `main`.** The repository owner reviews changes as they land and
+asked for work to go straight onto the default branch, so do not open a side
+branch or a pull request unless they ask for one. `main` is what people clone,
+so run `npm run lint`, `npm run build` and `npm test` before every push to it.
+
 **Commit after every result report.** Whenever a piece of work is reported as
 done — an analysis, a fix, a refactor, a status report — commit what it
 produced before ending the turn, and push to the working branch. This

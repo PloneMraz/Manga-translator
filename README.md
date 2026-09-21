@@ -265,8 +265,8 @@ anything built on it.
 
 ## Licence
 
-Source files carry `SPDX-License-Identifier: Apache-2.0`. A `LICENSE` file
-has not been added yet.
+Apache-2.0. The full text is in [LICENSE](LICENSE), and every source file
+carries an `SPDX-License-Identifier: Apache-2.0` header.
 
 Translating a comic you do not hold the rights to, and distributing the
 result, is your responsibility and in most places not lawful. This tool is
