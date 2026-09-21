@@ -14,6 +14,7 @@ import {
   type TranslationEngine,
 } from '../types';
 import { BubbleDetector, loadImage, type TextRegionDetector } from './bubbleDetector';
+import { MangaOcrReader } from './mangaOcr';
 
 /**
  * UNUSED. Transformers.js cannot run manga-ocr through its image-to-text
@@ -72,6 +73,13 @@ export interface OfflineEngineOptions {
    */
   localModelPath?: string;
   allowRemoteModels?: boolean;
+  /**
+   * Where manga-ocr is served from: a directory holding onnx/encoder_model.onnx,
+   * onnx/decoder_model.onnx and vocab.txt. Reading a page is off until this is
+   * set, because no public build of this model can be driven from a
+   * Transformers.js pipeline -- see the note on OCR_MODEL.
+   */
+  ocrModelUrl?: string;
   /** 'webgpu' is far faster where it exists; 'wasm' works everywhere. */
   device?: 'webgpu' | 'wasm';
   /** Quantization. Smaller is lighter; q8 is the sensible default. */
@@ -91,7 +99,7 @@ export class OfflineEngine implements TranslationEngine {
 
   private readonly detector: TextRegionDetector;
   private readonly options: OfflineEngineOptions;
-  private ocr: AnyPipeline | null = null;
+  private reader: MangaOcrReader | null = null;
   private translator: AnyPipeline | null = null;
   private preparing: Promise<void> | null = null;
 
@@ -137,11 +145,15 @@ export class OfflineEngine implements TranslationEngine {
     };
 
     try {
-      this.ocr = (await pipeline('image-to-text', OCR_MODEL, {
-        device,
-        dtype,
-        progress_callback: report('Japanese text reader'),
-      })) as unknown as AnyPipeline;
+      // manga-ocr runs through MangaOcrReader, not a pipeline: its BERT
+      // decoder has no merged form for Transformers.js to load.
+      if (this.options.ocrModelUrl) {
+        this.reader = new MangaOcrReader({
+          modelUrl: this.options.ocrModelUrl,
+          executionProviders: device === 'webgpu' ? ['webgpu', 'wasm'] : ['wasm'],
+        });
+        await this.reader.load(onProgress);
+      }
 
       this.translator = (await pipeline('translation', TRANSLATION_MODEL, {
         device,
@@ -178,8 +190,7 @@ export class OfflineEngine implements TranslationEngine {
         message: `Reading bubble ${index + 1} of ${boxes.length}`,
         ratio: index / boxes.length,
       });
-      const crop = cropToDataUrl(source, boxes[index].box);
-      const ocrText = await this.readText(crop);
+      const ocrText = await this.readText(cropToCanvas(source, boxes[index].box));
       if (!ocrText) continue;
 
       regions.push({
@@ -231,10 +242,14 @@ export class OfflineEngine implements TranslationEngine {
     return out;
   }
 
-  private async readText(dataUrl: string): Promise<string> {
-    if (!this.ocr) throw new EngineError('MODEL_LOAD_FAILED', 'The text reader is not loaded.');
-    const result = await this.ocr(dataUrl);
-    return firstString(result, 'generated_text');
+  private async readText(crop: HTMLCanvasElement): Promise<string> {
+    if (!this.reader) {
+      throw new EngineError(
+        'MODEL_LOAD_FAILED',
+        'No Japanese text reader is configured. Set ocrModelUrl to a manga-ocr export, or use the AI engine.',
+      );
+    }
+    return this.reader.read(crop);
   }
 
   private async runTranslator(text: string): Promise<string> {
@@ -246,7 +261,8 @@ export class OfflineEngine implements TranslationEngine {
   }
 
   dispose(): void {
-    this.ocr = null;
+    this.reader?.dispose();
+    this.reader = null;
     this.translator = null;
     this.preparing = null;
   }
@@ -276,7 +292,8 @@ function firstString(result: unknown, key: string): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function cropToDataUrl(source: HTMLImageElement, box: { x: number; y: number; width: number; height: number }): string {
+/** The reader takes a canvas, so there is no need to round-trip through PNG. */
+function cropToCanvas(source: HTMLImageElement, box: { x: number; y: number; width: number; height: number }): HTMLCanvasElement {
   const x = Math.round((box.x / 100) * source.width);
   const y = Math.round((box.y / 100) * source.height);
   const width = Math.max(1, Math.round((box.width / 100) * source.width));
@@ -290,5 +307,5 @@ function cropToDataUrl(source: HTMLImageElement, box: { x: number; y: number; wi
     throw new EngineError('UNSUPPORTED', 'This browser would not give us a 2D canvas to crop with.');
   }
   context.drawImage(source, x, y, width, height, 0, 0, width, height);
-  return canvas.toDataURL('image/png');
+  return canvas;
 }
