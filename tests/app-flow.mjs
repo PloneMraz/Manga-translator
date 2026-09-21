@@ -105,7 +105,15 @@ console.log(failed === 0 ? '\nPASS' : `\nFAIL (${failed} check(s))`);
 if (failed > 0) process.exitCode = 1;
 
 async function startServer() {
-  const child = spawn('npm', ['run', 'dev'], { stdio: 'ignore', env: { ...process.env, PORT: String(PORT) } });
+  // Run the dev server's own entry point with this Node, rather than going
+  // through npm. On Windows npm is npm.cmd, which Node refuses to spawn
+  // without a shell, and a shell would leave the real server running when the
+  // shell is killed -- stranding the port for the next run.
+  const tsx = join('node_modules', 'tsx', 'dist', 'cli.mjs');
+  const child = spawn(process.execPath, [tsx, 'server.ts'], {
+    stdio: 'ignore',
+    env: { ...process.env, PORT: String(PORT) },
+  });
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     try {
