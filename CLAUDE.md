@@ -65,13 +65,18 @@ execute ONNX models in the browser with no backend. Verified components:
 | Read Japanese text | manga-ocr, as ONNX | **no working conversion found** |
 | Translate ja→en | `Xenova/opus-mt-ja-en` | works: 久しぶり → "It's been a while." |
 
-Reading a page offline does not work yet. Four public ONNX conversions of
-manga-ocr were tried on this machine: one cannot load, one returns an empty
-string for every image, and two return the wrong characters. dtype, image
-preprocessing, the tokenizer, the generation config and the decoding strategy
-were each ruled out by experiment -- see the comment on `OCR_MODEL` in
-`src/engine/offline/index.ts` before repeating any of that work. Exporting
-ONNX from `kha-white/manga-ocr-base` with Optimum is the remaining route.
+Reading a page offline does not work yet, and the reason is structural rather
+than a bad model file. manga-ocr's decoder is BERT, which has no past key
+values, so a merged decoder cannot exist for it -- Optimum refuses to export
+one. Transformers.js will not load an encoder-decoder without
+`onnx/decoder_model_merged.onnx`. Those two facts cannot both be satisfied,
+and a clean self-made export confirmed it from both ends.
+
+So do not go looking for a better conversion; there isn't one. The route is
+to drive ONNX Runtime Web directly -- encoder once, then greedy decoding with
+the plain decoder, which needs no cache by definition. The comment on
+`OCR_MODEL` in `src/engine/offline/index.ts` lists everything already ruled
+out by experiment.
 
 A model being tagged `library_name: transformers.js` says nothing about
 whether it works. Load a candidate and check it returns the text that is in
