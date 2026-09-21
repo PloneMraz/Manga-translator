@@ -16,35 +16,44 @@ import {
 import { BubbleDetector, loadImage, type TextRegionDetector } from './bubbleDetector';
 
 /**
- * NOT WORKING YET. Every public ONNX conversion of manga-ocr tested so far
- * fails, and this constant only records the least-bad one. Reading a page
- * offline does not work until a correct conversion exists.
+ * UNUSED. Transformers.js cannot run manga-ocr through its image-to-text
+ * pipeline at all, and no choice of model repository changes that. The
+ * constant is kept only so the finding below stays attached to the code it
+ * concerns.
  *
- * What was tried, and how each one failed:
+ * manga-ocr's decoder is BERT, which has no past key values, so there is no
+ * such thing as a merged decoder for it. Optimum says so outright and refuses
+ * to produce one:
  *
- * - onnx-community/manga-ocr-base-ONNX: no decoder_model_merged and no
- *   tokenizer files at all, so it 404s on load. Being tagged
- *   library_name: transformers.js is not the same as having the layout
- *   Transformers.js needs.
- * - ms57rd/manga-ocr-base-ONNX: loads, then returns an empty string for
- *   every image, including large clean text on white.
- * - DigitalLarynx/manga-ocr-onnx and xingliao/manga-ocr-onnx-full: load and
- *   return text, but the wrong text -- the same handful of unrelated kanji
- *   from all of them.
+ *     ValueError: The decoder part of the encoder-decoder model is bert
+ *     which does not need past key values.
  *
- * Ruled out by experiment, so do not spend time on these again: dtype (q8,
- * fp32 and mixed all behave identically), image preprocessing (a clean
- * 224x224 render fails the same way), the tokenizer (the repo vocabulary and
- * kha-white's original decode the generated ids identically), the generation
- * config (matches the original), and the decoding strategy (beam and greedy
- * are identical). The generated ids interleave the decoder start token with
- * real ones, which points at the exported graph's cache branch rather than
- * anything callers control.
+ * Transformers.js, meanwhile, will not load an encoder-decoder without
+ * onnx/decoder_model_merged.onnx. Both ends were confirmed here: a clean
+ * export straight from kha-white/manga-ocr-base, assembled locally with its
+ * own tokenizer and with remote loading switched off, still fails asking for
+ * that file. Setting use_cache to false in config.json does not change it.
  *
- * The way out is to export ONNX from kha-white/manga-ocr-base directly with
- * Optimum, which produces a correct merged decoder, and host that.
+ * That also explains the public conversions. onnx-community's export is
+ * correct -- an unmerged decoder is the right output -- and merely unusable
+ * from this pipeline, and it ships no tokenizer. The three that do carry a
+ * decoder_model_merged.onnx forced a graph that cannot be meaningful, which
+ * is why all three return the same handful of unrelated kanji.
+ *
+ * Ruled out by experiment; do not repeat any of it. dtype (q8, fp32, mixed:
+ * identical), image preprocessing (a clean 224x224 render fails the same
+ * way, though a legacy "size": 224 config really does resize to 224x123 and
+ * break the position embedding at 99 vs 197), the tokenizer (the repo
+ * vocabularies and kha-white's decode identical ids identically), the
+ * generation config (matches the original), and the decoding strategy (beam
+ * and greedy identical).
+ *
+ * The way forward is to stop using the pipeline: run encoder and decoder on
+ * ONNX Runtime Web directly and drive greedy decoding here. A BERT decoder
+ * needs no cache by definition -- feed the whole sequence each step -- and a
+ * speech bubble is short enough that the cost does not matter.
  */
-export const OCR_MODEL = 'ms57rd/manga-ocr-base-ONNX';
+export const OCR_MODEL = 'onnx-community/manga-ocr-base-ONNX';
 export const TRANSLATION_MODEL = 'Xenova/opus-mt-ja-en';
 
 /**
