@@ -11,8 +11,9 @@ import {
   RotateCcw,
   Sparkles,
   HelpCircle,
-  ShieldCheck,
-  ShieldAlert
+  Cpu,
+  KeyRound,
+  Settings
 } from 'lucide-react';
 
 interface MenubarProps {
@@ -20,7 +21,12 @@ interface MenubarProps {
   onUploadClicked: () => void;
   onExportClicked: () => void;
   onHelpClicked: () => void;
-  hasApiKey: boolean;
+  onSettingsClicked: () => void;
+  /** Which engine is selected, shown in the status pill. */
+  engineLabel: string;
+  engineKind: 'ai' | 'offline';
+  /** False when the chosen engine cannot run yet -- an AI engine with no key. */
+  engineReady: boolean;
   theme: 'light' | 'dark';
   onThemeChange: (theme: 'light' | 'dark') => void;
 }
@@ -30,7 +36,10 @@ export const Menubar: React.FC<MenubarProps> = ({
   onUploadClicked,
   onExportClicked,
   onHelpClicked,
-  hasApiKey,
+  onSettingsClicked,
+  engineLabel,
+  engineKind,
+  engineReady,
   theme,
   onThemeChange
 }) => {
@@ -110,7 +119,7 @@ export const Menubar: React.FC<MenubarProps> = ({
                 </button>
                 <div className={`border-t my-1 ${theme === 'dark' ? 'border-stone-805' : 'border-gray-100'}`}></div>
                 <button
-                  onClick={() => handleMenuAction(() => alert('Sliding Window size: Current active page holds translation. Boundaries preloaded (+-3). Discarded caches kept on page_NNN.json disk simulator.'))}
+                  onClick={() => handleMenuAction(() => alert('Pages within three of the one you are on are prepared in advance. Nothing is cached to disk; pages live in memory until you export them.'))}
                   className={`w-full text-left px-3.5 py-2 font-mono text-[10.5px] transition-colors ${
                     theme === 'dark' ? 'hover:bg-stone-800 text-stone-500' : 'hover:bg-gray-50 text-gray-400'
                   }`}
@@ -174,13 +183,14 @@ export const Menubar: React.FC<MenubarProps> = ({
                   : 'bg-white border-gray-200 text-gray-800'
               }`}>
                 <button
+                  id="menu-export-page-btn"
                   onClick={() => handleMenuAction(onExportClicked)}
                   className={`w-full text-left px-3.5 py-2 flex items-center space-x-2 transition-colors ${
                     theme === 'dark' ? 'hover:bg-stone-800 text-stone-300' : 'hover:bg-gray-50 text-gray-700'
                   }`}
                 >
                   <Download size={13} className="text-blue-500" />
-                  <span>Run LaMa Inpaint & Compile...</span>
+                  <span>Write this page out&hellip;</span>
                 </button>
               </div>
             )}
@@ -239,25 +249,27 @@ export const Menubar: React.FC<MenubarProps> = ({
       {/* Upper right systems - API presence & Help */}
       <div className="flex items-center space-x-3 text-gray-500">
         
-        {/* CLOUD API STATUS BAR */}
-        <div
-          id="api-status-indicator"
-          className={`flex items-center space-x-2 px-2.5 py-0.5 border rounded-full select-none text-[10px] font-mono text-center ${
-            theme === 'dark' ? 'bg-stone-950 border-stone-800 text-stone-400' : 'bg-gray-50 border-gray-200 text-gray-500'
+        {/* WHICH ENGINE IS SELECTED -- click to change it */}
+        <button
+          id="engine-status-indicator"
+          onClick={onSettingsClicked}
+          title="Translation settings"
+          className={`flex items-center space-x-2 px-2.5 py-0.5 border rounded-full select-none text-[10px] font-mono cursor-pointer transition-colors ${
+            theme === 'dark'
+              ? 'bg-stone-950 border-stone-800 text-stone-400 hover:border-stone-600'
+              : 'bg-gray-50 border-gray-200 text-gray-500 hover:border-gray-300'
           }`}
         >
-          {hasApiKey ? (
-            <>
-              <ShieldCheck size={12} className="text-emerald-500 shadow-sm" />
-              <span className="text-emerald-600 font-medium">GEMINI CLOUD OCR READY</span>
-            </>
+          {engineKind === 'offline' ? (
+            <Cpu size={12} className="text-blue-500" />
           ) : (
-            <>
-              <ShieldAlert size={12} className="text-amber-500" />
-              <span className="text-amber-650 font-medium">MOCK PARSER ACTIVE</span>
-            </>
+            <KeyRound size={12} className={engineReady ? 'text-emerald-500' : 'text-amber-500'} />
           )}
-        </div>
+          <span className={`font-medium uppercase ${engineReady ? '' : 'text-amber-600'}`}>
+            {engineReady ? engineLabel : `${engineLabel} — no key`}
+          </span>
+          <Settings size={11} className="opacity-60" />
+        </button>
 
         {/* HELP MANUAL BUTTON */}
         <button

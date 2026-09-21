@@ -27,6 +27,11 @@ This is an honest read of where the code is, so nobody wastes an evening.
   Tested in a real browser: the original text is gone, the translation is
   drawn, the artwork is byte-identical, and regions the user did not approve
   are untouched. Run `npm run test:render`.
+- **The whole manual path.** Load a page, draw a region, type a translation,
+  approve it, export it — and get that page back as a PNG with the text set
+  in place. Driven end to end in a real browser by `npm run test:app`. This
+  is the path that needs no model and no API key, so it is the one that must
+  never break.
 
 **Written but never executed:**
 
@@ -37,17 +42,18 @@ This is an honest read of where the code is, so nobody wastes an evening.
 
 **Does not work:**
 
-- **The UI is not connected to any of this.** The interface still talks to
-  the Express server that is being retired, and its Export button still hands
-  you a hardcoded SVG saying `COMIC TRANSLATION OUT` under a `.png` name. The
-  renderer that replaces it works; nothing calls it yet.
-- The three built-in "sample pages" are `div`s drawn to look like comic
-  panels. There is no manga in this repository.
+- **Automatic translation has never actually run.** The engine layer is
+  wired into the interface, but the on-device models were written in an
+  environment where `huggingface.co` is unreachable, so nobody has yet
+  watched them read a page. Expect the first run to need fixing.
 - There is no desktop build and no Android build yet.
 - The layout has no responsive breakpoints and will not fit a phone screen.
+- `server.ts` still exists, and `npm run dev` still goes through it, although
+  nothing in the app calls it any more.
 
-If you want a working manga translator today, this is not it. If you want to
-read or build one, carry on.
+So: you can already use this as a hand-lettering tool — load pages, translate
+them yourself, export them, and the files are real. The automatic part is
+built but unproven.
 
 ---
 
@@ -154,7 +160,8 @@ npm run dev          # http://localhost:3000
 | `npm start` | Serve the production build |
 | `npm run test:detector` | Run `BubbleDetector` in a real browser |
 | `npm run test:render` | Render a page and check the result, in a real browser |
-| `npm test` | Both of the above |
+| `npm run test:app` | Drive the whole app end to end, in a real browser |
+| `npm test` | All three |
 
 `npm run dev` and `npm start` still go through `server.ts`, which is on its
 way out. They will disappear once the UI talks to the engine layer directly.
@@ -205,13 +212,17 @@ src/
 │   ├── renderPage.ts    cover the original, set the translation, encode
 │   ├── destination.ts   a folder you picked, or one download per page
 │   └── index.ts         folder and file naming
-├── lib/image.ts         shared canvas helpers
-├── components/          the interface (still the old prototype)
+├── settings.ts          engine choice and languages, kept on the device
+├── lib/
+│   ├── image.ts         shared canvas helpers
+│   └── regions.ts       fills in the fields an engine does not report
+├── components/          the interface
 ├── types.ts             Page and Region
 └── App.tsx              state and workflow
 tests/
 ├── bubble-detector.mjs  browser test for the detector
-└── render-page.mjs      browser test for the renderer
+├── render-page.mjs      browser test for the renderer
+└── app-flow.mjs         end-to-end test of the whole manual path
 server.ts                Express + Gemini — being retired
 ```
 
@@ -232,10 +243,9 @@ precisely the behaviour this rule exists to prevent.
 In the order it is being built:
 
 1. ~~**Real export.**~~ Done: `src/output/` renders and writes pages.
-2. **Wire the UI to the engine and output layers.** Engine picker, provider
-   dropdown, key field, language selectors, and the Export button pointed at
-   the real renderer. Retire `server.ts`. This is what makes the work above
-   reachable from the interface.
+2. ~~**Wire the UI to the engine and output layers.**~~ Done: engine picker,
+   provider dropdown, key field, language selectors, and an Export button
+   that writes a real page. `server.ts` is unused now and can go.
 3. **A trained region detector**, exported to ONNX, so sound effects are
    found too.
 4. **Desktop build** (Tauri) and **Android build** (WebView shell), from the
