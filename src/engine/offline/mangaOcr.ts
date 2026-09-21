@@ -31,6 +31,28 @@ const EOS_TOKEN = 3;
 /** A bubble that runs longer than this is a runaway, not a bubble. */
 const MAX_TOKENS = 64;
 
+let runtimeConfigured = false;
+
+/**
+ * ONNX Runtime fetches its .wasm by URL at run time, so no bundler resolves
+ * it and the request otherwise falls through to the SPA fallback -- the
+ * runtime is then handed index.html and fails on the magic word, reporting
+ * "found 3c 21 64 6f", which is the start of "<!doctype html>". Point it at
+ * the copy this app serves itself.
+ *
+ * Threads are off deliberately: they need SharedArrayBuffer, which needs
+ * cross-origin isolation headers a packaged app cannot count on.
+ */
+function configureRuntime(wasmPath?: string): void {
+  if (runtimeConfigured) return;
+  // Left unset, the runtime resolves its files relative to its own module,
+  // which is what `optimizeDeps.exclude` in vite.config.ts makes possible.
+  // A shell that relocates them can still say where they went.
+  if (wasmPath) ort.env.wasm.wasmPaths = wasmPath;
+  ort.env.wasm.numThreads = 1;
+  runtimeConfigured = true;
+}
+
 export interface MangaOcrOptions {
   /**
    * Where `onnx/encoder_model.onnx`, `onnx/decoder_model.onnx` and
@@ -39,6 +61,8 @@ export interface MangaOcrOptions {
   modelUrl: string;
   /** 'webgpu' where available; 'wasm' works everywhere. */
   executionProviders?: string[];
+  /** Where ONNX Runtime's own .wasm files are served from. */
+  wasmPath?: string;
 }
 
 export class MangaOcrReader {
@@ -63,6 +87,7 @@ export class MangaOcrReader {
   private async loadOnce(onProgress?: ProgressReporter): Promise<void> {
     const base = this.options.modelUrl.replace(/\/+$/, '');
     const providers = this.options.executionProviders ?? ['wasm'];
+    configureRuntime(this.options.wasmPath);
 
     try {
       onProgress?.({ stage: 'preparing', message: 'Fetching the Japanese text reader' });

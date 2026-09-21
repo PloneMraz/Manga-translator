@@ -6,3 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Model weights are large binaries, fetched or bundled separately.
+public/models/
+public/ort/

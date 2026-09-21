@@ -6,6 +6,13 @@ import {defineConfig} from 'vite';
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
+    optimizeDeps: {
+      // ONNX Runtime loads its WebAssembly loader with a dynamic import at
+      // run time. Pre-bundling rewrites that into a request Vite then refuses
+      // to serve, which surfaces as "no available backend found". Leaving the
+      // package alone lets it resolve its own files.
+      exclude: ['onnxruntime-web'],
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
