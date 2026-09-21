@@ -59,15 +59,24 @@ fork the interface per platform.
 The offline pipeline runs through Transformers.js / ONNX Runtime Web, which
 execute ONNX models in the browser with no backend. Verified components:
 
-| Step | Model | Size |
+| Step | Model | State |
 | --- | --- | --- |
-| Find text regions | `huyvux3005/manga109-segmentation-bubble` (YOLO seg) | 12 MB `.pt`, needs ONNX export |
-| Read Japanese text | `onnx-community/manga-ocr-base-ONNX` | 117 MB int8, 74 MB q4f16 |
-| Translate ja→en | `Xenova/opus-mt-ja-en` | Transformers.js ONNX build |
+| Find text regions | `BubbleDetector` (classical, no download) | works; a trained detector can replace it |
+| Read Japanese text | manga-ocr, as ONNX | **no working conversion found** |
+| Translate ja→en | `Xenova/opus-mt-ja-en` | works: 久しぶり → "It's been a while." |
 
-The manga-ocr ONNX card declares `library_name: transformers.js`, so it is
-built for exactly this use. A ~1 GB install is acceptable; do not trade
-quality for size without being asked.
+Reading a page offline does not work yet. Four public ONNX conversions of
+manga-ocr were tried on this machine: one cannot load, one returns an empty
+string for every image, and two return the wrong characters. dtype, image
+preprocessing, the tokenizer, the generation config and the decoding strategy
+were each ruled out by experiment -- see the comment on `OCR_MODEL` in
+`src/engine/offline/index.ts` before repeating any of that work. Exporting
+ONNX from `kha-white/manga-ocr-base` with Optimum is the remaining route.
+
+A model being tagged `library_name: transformers.js` says nothing about
+whether it works. Load a candidate and check it returns the text that is in
+the picture before recording it here as verified. A ~1 GB install is
+acceptable; do not trade quality for size without being asked.
 
 Writing files: use the File System Access API on desktop browsers, the native
 filesystem in the Tauri and Android shells, and fall back to one download per
