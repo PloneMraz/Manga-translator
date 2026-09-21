@@ -187,11 +187,13 @@ Playwright is deliberately **not** a dependency, because installing it pulls
 down a browser. To run the test:
 
 ```bash
-npm i -D playwright && npx playwright install chromium
-npm run test:detector
+npm install --no-save playwright
+CHROMIUM_PATH="C:/Program Files/Google/Chrome/Application/chrome.exe" npm test
 ```
 
-Set `CHROMIUM_PATH` to reuse a browser you already have.
+`CHROMIUM_PATH` points at any Chromium-based browser you already have, so
+there is usually nothing to download. Chrome and Edge both work. Only run
+`npx playwright install chromium` if you have neither.
 
 ---
 

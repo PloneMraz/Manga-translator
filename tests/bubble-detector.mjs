@@ -18,7 +18,7 @@
  * Set CHROMIUM_PATH to use a browser that is already on the machine.
  */
 
-import { execFileSync } from 'node:child_process';
+import { build } from 'esbuild';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,12 +29,14 @@ const work = mkdtempSync(join(tmpdir(), 'bubble-detector-'));
 const bundlePath = join(work, 'detector.js');
 
 try {
-  execFileSync(
-    'npx',
-    ['esbuild', 'src/engine/offline/bubbleDetector.ts', '--bundle', '--format=iife',
-      '--global-name=BD', `--outfile=${bundlePath}`, '--log-level=warning'],
-    { stdio: 'inherit' },
-  );
+  await build({
+    entryPoints: ['src/engine/offline/bubbleDetector.ts'],
+    bundle: true,
+    format: 'iife',
+    globalName: 'BD',
+    outfile: bundlePath,
+    logLevel: 'warning',
+  });
 
   const { chromium } = await import('playwright');
   const launchOptions = { args: ['--no-sandbox'] };

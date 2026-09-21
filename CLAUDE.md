@@ -73,12 +73,24 @@ Writing files: use the File System Access API on desktop browsers, the native
 filesystem in the Tauri and Android shells, and fall back to one download per
 approved page where neither exists. Never zip.
 
-## Known constraint when working in the cloud container
+## Where this is being worked on
 
-`huggingface.co` is blocked by the egress proxy here (403), so models cannot
-be downloaded and inference cannot be run end to end in this environment.
-Code, typecheck and build are verifiable; actual model output is not. Say so
-rather than implying a pipeline was tested.
+Two environments, and they differ in one way that matters.
+
+**The owner's machine** (Windows, Node 24): everything works. `npm install`
+needs no flags, and `huggingface.co` is reachable, so the on-device models
+can actually be run here. This is the only place the offline pipeline can be
+proven.
+
+**A cloud container**: `huggingface.co` is blocked by the egress proxy (403),
+so models cannot be downloaded and inference cannot run end to end. Installing
+`@huggingface/transformers` there needs `--ignore-scripts`, because its
+`onnxruntime-node` dependency fetches a native binary in a postinstall step
+from a blocked host -- harmless, since that binary is only used when
+Transformers.js runs under Node and this app runs it in the browser.
+
+If you are in the container, say that model output was not verified rather
+than implying a pipeline was tested.
 
 ## Commands
 
@@ -94,16 +106,24 @@ npm run test:app       # drives the whole app end to end, in a browser
 npm test               # all three
 ```
 
-`test:detector` needs Playwright, which is deliberately not a dependency
-because installing it pulls down a browser: `npm i -D playwright && npx
-playwright install chromium`. In this container a browser is already present,
-so run it as `CHROMIUM_PATH=/opt/pw-browsers/chromium npm run test:detector`
-and never run `playwright install`.
+The browser tests need Playwright, which is deliberately not a dependency
+because installing it normally pulls down a browser too. Install the package
+without saving it, and point `CHROMIUM_PATH` at a Chromium-based browser the
+machine already has rather than downloading another one:
 
-Installing `@huggingface/transformers` here needs `--ignore-scripts`: its
-`onnxruntime-node` dependency downloads a native binary in a postinstall step
-and the egress proxy blocks that host. The binary is only used when
-Transformers.js runs under Node, and this app runs it in the browser.
+```
+npm install --no-save playwright
+CHROMIUM_PATH="C:/Program Files/Google/Chrome/Application/chrome.exe" npm test
+```
+
+Edge works as well. Only run `npx playwright install chromium` if no such
+browser exists.
+
+The tests bundle through esbuild's Node API and start the dev server by
+running `tsx` with this Node, rather than shelling out to `npx` or `npm`.
+Keep it that way: on Windows those are `.cmd` files that Node refuses to
+spawn without a shell, and a shell would leave the real server running after
+the test kills it.
 
 ## Engine layer
 

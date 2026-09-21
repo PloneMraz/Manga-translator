@@ -12,7 +12,7 @@
  * Needs a browser. See tests/bubble-detector.mjs for the Playwright setup.
  */
 
-import { execFileSync } from 'node:child_process';
+import { build } from 'esbuild';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,12 +27,14 @@ function check(name, ok, detail) {
 }
 
 try {
-  execFileSync(
-    'npx',
-    ['esbuild', 'src/output/renderPage.ts', '--bundle', '--format=iife',
-      '--global-name=R', `--outfile=${bundlePath}`, '--log-level=warning'],
-    { stdio: 'inherit' },
-  );
+  await build({
+    entryPoints: ['src/output/renderPage.ts'],
+    bundle: true,
+    format: 'iife',
+    globalName: 'R',
+    outfile: bundlePath,
+    logLevel: 'warning',
+  });
 
   const { chromium } = await import('playwright');
   const launchOptions = { args: ['--no-sandbox'] };
