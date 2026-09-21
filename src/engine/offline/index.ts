@@ -15,7 +15,36 @@ import {
 } from '../types';
 import { BubbleDetector, loadImage, type TextRegionDetector } from './bubbleDetector';
 
-export const OCR_MODEL = 'onnx-community/manga-ocr-base-ONNX';
+/**
+ * NOT WORKING YET. Every public ONNX conversion of manga-ocr tested so far
+ * fails, and this constant only records the least-bad one. Reading a page
+ * offline does not work until a correct conversion exists.
+ *
+ * What was tried, and how each one failed:
+ *
+ * - onnx-community/manga-ocr-base-ONNX: no decoder_model_merged and no
+ *   tokenizer files at all, so it 404s on load. Being tagged
+ *   library_name: transformers.js is not the same as having the layout
+ *   Transformers.js needs.
+ * - ms57rd/manga-ocr-base-ONNX: loads, then returns an empty string for
+ *   every image, including large clean text on white.
+ * - DigitalLarynx/manga-ocr-onnx and xingliao/manga-ocr-onnx-full: load and
+ *   return text, but the wrong text -- the same handful of unrelated kanji
+ *   from all of them.
+ *
+ * Ruled out by experiment, so do not spend time on these again: dtype (q8,
+ * fp32 and mixed all behave identically), image preprocessing (a clean
+ * 224x224 render fails the same way), the tokenizer (the repo vocabulary and
+ * kha-white's original decode the generated ids identically), the generation
+ * config (matches the original), and the decoding strategy (beam and greedy
+ * are identical). The generated ids interleave the decoder start token with
+ * real ones, which points at the exported graph's cache branch rather than
+ * anything callers control.
+ *
+ * The way out is to export ONNX from kha-white/manga-ocr-base directly with
+ * Optimum, which produces a correct merged decoder, and host that.
+ */
+export const OCR_MODEL = 'ms57rd/manga-ocr-base-ONNX';
 export const TRANSLATION_MODEL = 'Xenova/opus-mt-ja-en';
 
 /**
@@ -77,6 +106,11 @@ export class OfflineEngine implements TranslationEngine {
     if (this.options.localModelPath) {
       env.localModelPath = this.options.localModelPath;
       env.allowLocalModels = true;
+    } else {
+      // Otherwise Transformers.js probes this app's own origin for every
+      // model file first, so each one costs a 404 round trip before it even
+      // reaches the Hub.
+      env.allowLocalModels = false;
     }
     if (this.options.allowRemoteModels === false) {
       env.allowRemoteModels = false;
