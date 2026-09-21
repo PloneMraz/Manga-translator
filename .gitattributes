@@ -1,0 +1,23 @@
+# This repository is worked on from both Linux and Windows, and Git for
+# Windows turns on core.autocrlf by default. Without this file, the same
+# checkout has different line endings on each machine and whole files show up
+# as modified when nothing was touched.
+#
+# Normalise everything to LF in the repository and in the working tree, on
+# every platform. Modern editors on Windows handle LF without complaint.
+* text=auto eol=lf
+
+# Files Git must never rewrite.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.webp   binary
+*.gif    binary
+*.ico    binary
+*.pdf    binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.otf    binary
+*.wasm   binary
+*.onnx   binary
