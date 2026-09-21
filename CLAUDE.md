@@ -90,7 +90,8 @@ npm run build          # vite build + esbuild bundle of server.ts
 npm start              # node dist/server.cjs
 npm run test:detector  # runs BubbleDetector in a real browser
 npm run test:render    # renders a page and checks the result, in a browser
-npm test               # both browser tests
+npm run test:app       # drives the whole app end to end, in a browser
+npm test               # all three
 ```
 
 `test:detector` needs Playwright, which is deliberately not a dependency
@@ -145,19 +146,23 @@ Verified by running the toolchain, not by reading alone.
 - `tsconfig.json` does not set `strict`, so a clean `npm run lint` proves
   much less than it looks like. Null assignments to non-nullable fields pass
   silently.
-- Regions produced by the translation engine omit `font`, `fontSize`,
-  `align`, `isHidden` and `isApplied`, all of which `Region` in
-  `src/types.ts` declares as required. Only regions drawn in `Canvas.tsx`
-  carry them.
+- `@types/react` was missing until recently. With `allowJs: true`, TypeScript
+  inferred loose types from React's own JavaScript instead of failing, so
+  every component's props went unchecked and `npm run lint` passed anyway. It
+  is installed now; if a props mistake ever stops being reported, check that
+  it still is.
 - Around a hundred Tailwind classes use shades that do not exist
   (`bg-gray-55`, `text-stone-250`, `text-blue-550`, ...). They emit no CSS.
   Check a class against the built stylesheet before trusting it.
 - The UI has no responsive breakpoints at all, and the fixed 66px toolbar
   plus 360px properties panel exceed a phone's width on their own. The
   layout needs rebuilding for the Android shell, not tweaking.
-- The Export button still calls the old simulated path and downloads a
-  hardcoded SVG under a `.png` filename. `src/output/` replaces it and works;
-  nothing calls it yet.
-- The three built-in sample pages are `div`s pretending to be comic panels.
-  They are dead weight once real images are the input; delete them with the
-  client rework.
+- `server.ts` is dead weight now: nothing in the app calls it, but `npm run
+  dev` and `npm start` still go through it. Removing it means replacing those
+  scripts with plain Vite.
+- The offline engine starts fetching its models the moment a page is added,
+  because the preload window fires immediately. That is a lot of bandwidth to
+  spend without asking first.
+- Transformers.js is imported eagerly, so its code sits in the first bundle
+  (~900 kB) even for someone using an API key. A dynamic import inside
+  `createEngine` would fix that.

@@ -3,8 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Page, Region, ToolType } from './types';
+import { createEngine, EngineError, findProvider, type EngineProgress } from './engine';
+import {
+  openOutputSession,
+  outputFolderName,
+  pageFileName,
+  pickOutputRoot,
+  renderTranslatedPage,
+  supportsDirectoryOutput,
+  type DirectoryHandle,
+  type OutputSession,
+} from './output';
+import { toRegions } from './lib/regions';
+import { loadSettings, saveSettings, type AppSettings } from './settings';
+import { SettingsModal } from './components/SettingsModal';
 import { Menubar } from './components/Menubar';
 import { Toolbar } from './components/Toolbar';
 import { Canvas } from './components/Canvas';
@@ -26,36 +40,31 @@ import {
   Plus
 } from 'lucide-react';
 
-const DEFAULT_PAGES: Page[] = [
-  {
-    id: 'page_001',
-    name: 'Page 1 — Outer Sky',
-    imageUrl: null, // Renders ComicPanels page_001
-    status: 'queued',
-    regions: [],
-    isComplete: false
-  },
-  {
-    id: 'page_002',
-    name: 'Page 2 — Old Friend Meeting',
-    imageUrl: null, // Renders ComicPanels page_002
-    status: 'queued',
-    regions: [],
-    isComplete: false
-  },
-  {
-    id: 'page_003',
-    name: 'Page 3 — Episode Start',
-    imageUrl: null, // Renders ComicPanels page_003
-    status: 'queued',
-    regions: [],
-    isComplete: false
-  }
-];
+/** A run of work is one upload; more than this belongs in separate runs. */
+const MAX_PAGES = 100;
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error(`${file.name} could not be read.`));
+    reader.readAsDataURL(file);
+  });
+}
+
+/** Pixel size, so engines and the renderer work at the page's real scale. */
+function measure(dataUrl: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+    image.onerror = () => reject(new Error('Not a decodable image.'));
+    image.src = dataUrl;
+  });
+}
 
 export default function App() {
-  const [pages, setPages] = useState<Page[]>(DEFAULT_PAGES);
-  const [activePageId, setActivePageId] = useState<string>('page_001');
+  const [pages, setPages] = useState<Page[]>([]);
+  const [activePageId, setActivePageId] = useState<string>('');
   const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null);
 
   // Photoshop Visual State
@@ -78,8 +87,33 @@ export default function App() {
   const [exportProcessing, setExportProcessing] = useState<boolean>(false);
   const [exportComplete, setExportComplete] = useState<boolean>(false);
 
-  // Cloud key availability indicator
-  const [hasApiKey, setHasApiKey] = useState<boolean>(false);
+  // Which engine translates, and between which languages. Never hardcoded.
+  const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
+  const [showSettings, setShowSettings] = useState<boolean>(false);
+  const [engineStatus, setEngineStatus] = useState<string | null>(null);
+  const [engineError, setEngineError] = useState<string | null>(null);
+
+  // Where approved pages are written. One upload is one session, one folder.
+  const outputRootRef = useRef<DirectoryHandle | null>(null);
+  const sessionRef = useRef<OutputSession | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportedTo, setExportedTo] = useState<string | null>(null);
+
+  const engine = useMemo(() => createEngine(settings.engine), [settings.engine]);
+  useEffect(() => () => engine.dispose(), [engine]);
+
+  const langs = { source: settings.sourceLang, target: settings.targetLang };
+  const engineReady =
+    settings.engine.kind === 'offline' || Boolean(settings.engine.apiKey?.trim());
+  const engineLabel =
+    settings.engine.kind === 'offline'
+      ? 'On this device'
+      : findProvider(settings.engine.providerId)?.label ?? 'AI';
+
+  const reportProgress = (progress: EngineProgress) => setEngineStatus(progress.message);
+
+  const describeFailure = (error: unknown): string =>
+    error instanceof EngineError ? error.message : error instanceof Error ? error.message : String(error);
 
   // Appearance Theme choice ('light' by default)
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -102,18 +136,6 @@ export default function App() {
   // Active Page Reference Shortcut
   const activePage = pages.find((p) => p.id === activePageId) || pages[0];
 
-  // 1. Fetch configuration on start
-  useEffect(() => {
-    fetch('/api/config')
-      .then((res) => res.json())
-      .then((data) => {
-        setHasApiKey(!!data.hasApiKey);
-      })
-      .catch(() => {
-        setHasApiKey(false);
-      });
-  }, []);
-
   // 2. RUN SLIDING WINDOW CONTROLLER: Preload pages in proximity zone (±3)
   useEffect(() => {
     const activeIndex = pages.findIndex((p) => p.id === activePageId);
@@ -129,43 +151,38 @@ export default function App() {
     });
   }, [activePageId, pages]);
 
-  // Preloading step: calls layout analyzer
+  // Preloading step: ask the engine to find, read and translate the page.
   const preloadPage = async (pageId: string) => {
-    // Transition status to prevent double dispatches
-    setPages((prev) =>
-      prev.map((p) => (p.id === pageId ? { ...p, status: 'preloaded' } : p))
-    );
+    // Move the status first so a second pass cannot dispatch the same page.
+    setPages((prev) => prev.map((p) => (p.id === pageId ? { ...p, status: 'preloaded' } : p)));
+    setEngineError(null);
+
+    const pageObj = pages.find((p) => p.id === pageId);
+    if (!pageObj?.imageUrl) return;
 
     try {
-      const pageObj = pages.find((p) => p.id === pageId);
-      const payload: Record<string, any> = { pageId };
-
-      if (pageObj && pageObj.imageUrl) {
-        payload.imageBase64 = pageObj.imageUrl;
-      }
-
-      const res = await fetch('/api/analyze-layout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-
-      if (data.success && data.regions) {
-        setPages((prev) =>
-          prev.map((p) =>
-            p.id === pageId
-              ? {
-                  ...p,
-                  status: 'preloaded',
-                  regions: data.regions
-                }
-              : p
-          )
-        );
-      }
-    } catch (err) {
-      console.error('Failed preloading layout for page:', pageId, err);
+      const found = await engine.detectAndTranslate(
+        { dataUrl: pageObj.imageUrl, width: pageObj.width ?? 0, height: pageObj.height ?? 0 },
+        langs,
+        reportProgress,
+      );
+      // Engines report what they found; the presentation fields Region needs
+      // are filled in here, and nothing is marked applied without the user.
+      const regions = toRegions(found);
+      setPages((prev) =>
+        prev.map((p) => (p.id === pageId ? { ...p, status: 'preloaded', regions } : p)),
+      );
+    } catch (error) {
+      // No invented regions. The page stays empty and the failure is shown.
+      //
+      // The status must NOT go back to 'queued': the preload effect re-runs on
+      // every change to `pages`, so a queued page would be retried forever,
+      // re-rendering under the user's hands. 'preloaded' means "we tried";
+      // the page can still be worked on by hand, and Translate Now retries.
+      setEngineError(describeFailure(error));
+      setPages((prev) => prev.map((p) => (p.id === pageId ? { ...p, status: 'preloaded' } : p)));
+    } finally {
+      setEngineStatus(null);
     }
   };
 
@@ -215,7 +232,8 @@ export default function App() {
     setCountdown(null);
   };
 
-  // Trigger Translation API call for active page only
+  // Re-translate text already read: after an edit, or a change of target
+  // language. Detection and reading are not repeated.
   const triggerTranslation = async (pageId: string) => {
     const pageToTranslate = pages.find((p) => p.id === pageId);
     if (!pageToTranslate || pageToTranslate.regions.length === 0) {
@@ -223,49 +241,39 @@ export default function App() {
       return;
     }
 
-    // Set page state to TRANSLATING
-    setPages((prev) =>
-      prev.map((p) => (p.id === pageId ? { ...p, status: 'translating' } : p))
-    );
+    setPages((prev) => prev.map((p) => (p.id === pageId ? { ...p, status: 'translating' } : p)));
     setIsTranslating(true);
+    setEngineError(null);
 
     try {
-      const res = await fetch('/api/translate-text', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          pageId: pageId.startsWith('upload_') ? undefined : pageId,
-          regions: pageToTranslate.regions
-        })
-      });
-      const data = await res.json();
-
-      if (data.success && data.regions) {
-        setPages((prev) =>
-          prev.map((p) =>
-            p.id === pageId
-              ? {
-                  ...p,
-                  status: 'ready',
-                  regions: data.regions
-                }
-              : p
-          )
-        );
-      } else {
-        // Fallback or revert to preloaded
-        setPages((prev) =>
-          prev.map((p) => (p.id === pageId ? { ...p, status: 'ready' } : p))
-        );
-      }
-    } catch (err) {
-      console.error('Failed translating text sections:', err);
-      setPages((prev) =>
-        prev.map((p) => (p.id === pageId ? { ...p, status: 'ready' } : p))
+      const translations = await engine.translateTexts(
+        pageToTranslate.regions.map((r) => ({ id: r.id, type: r.type, text: r.ocrText })),
+        langs,
+        reportProgress,
       );
+      setPages((prev) =>
+        prev.map((p) =>
+          p.id === pageId
+            ? {
+                ...p,
+                status: 'ready',
+                regions: p.regions.map((r) => ({
+                  ...r,
+                  // A region the engine skipped keeps whatever it had; it is
+                  // never filled with a stand-in.
+                  translatedText: translations[r.id] ?? r.translatedText,
+                })),
+              }
+            : p,
+        ),
+      );
+    } catch (error) {
+      setEngineError(describeFailure(error));
+      setPages((prev) => prev.map((p) => (p.id === pageId ? { ...p, status: 'preloaded' } : p)));
     } finally {
       setIsTranslating(false);
       setCountdown(null);
+      setEngineStatus(null);
     }
   };
 
@@ -421,70 +429,185 @@ export default function App() {
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const chosen = Array.from(e.target.files ?? []);
+    e.target.value = ''; // let the same file be chosen again later
+    if (chosen.length === 0) return;
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64Url = reader.result as string;
-      const newPageId = `upload_${Date.now()}`;
-      
-      const newPage: Page = {
-        id: newPageId,
-        name: `Page ${pages.length + 1} — Uploaded Comic`,
-        imageUrl: base64Url,
-        status: 'queued',
-        regions: [],
-        isComplete: false
-      };
+    const room = MAX_PAGES - pages.length;
+    if (room <= 0) {
+      setEngineError(`This workspace holds ${MAX_PAGES} pages. Split a longer book into parts.`);
+      return;
+    }
+    const accepted = chosen.slice(0, room);
+    const firstBatch = pages.length === 0;
 
-      setPages((prev) => [...prev, newPage]);
-      handlePageSelect(newPageId); // Navigates automatically to uploaded page
-    };
-    reader.readAsDataURL(file);
-    e.target.value = ''; // Clean input
+    const loaded: Page[] = [];
+    for (const file of accepted) {
+      try {
+        const dataUrl = await readAsDataUrl(file);
+        const { width, height } = await measure(dataUrl);
+        loaded.push({
+          id: `upload_${Date.now().toString(36)}_${loaded.length}`,
+          name: file.name,
+          imageUrl: dataUrl,
+          status: 'queued',
+          regions: [],
+          isComplete: false,
+          width,
+          height,
+        });
+      } catch {
+        setEngineError(`${file.name} could not be read as an image.`);
+      }
+    }
+    if (loaded.length === 0) return;
+
+    if (accepted.length < chosen.length) {
+      setEngineError(`Only the first ${accepted.length} were added; the limit is ${MAX_PAGES} pages.`);
+    }
+
+    setPages((prev) => [...prev, ...loaded]);
+    if (firstBatch) {
+      // A fresh upload is a fresh run of work, so it gets its own folder.
+      sessionRef.current = null;
+      setExportedTo(null);
+      setActivePageId(loaded[0].id);
+    }
   };
 
   // 7. CORE CHAPTER RESET FLOW
   const handleResetChapter = () => {
     const confirmReset = window.confirm(
-      'Are you sure you want to reset the entire chapter workspace? This removes all manual boundary boxes and changes.'
+      'Clear the workspace? This removes every page you loaded and all the boxes and edits on them. Pages you already exported are not affected.'
     );
     if (confirmReset) {
       clearIntentTimers();
-      setPages(DEFAULT_PAGES.map(p => ({ ...p, status: 'queued', regions: [], isComplete: false })));
-      setActivePageId('page_001');
+      setPages([]);
+      setActivePageId('');
       setSelectedRegionId(null);
       setHasUnappliedEdits(false);
+      sessionRef.current = null;
+      setExportedTo(null);
+      setEngineError(null);
     }
   };
 
-  // 8. COMPILE AND EXPORT (LAMA SIMULATOR)
+  // 8. EXPORT: render this page and write it out
   const handleExportClicked = () => {
+    setExportError(null);
+    setExportedTo(null);
     setShowExportModal(true);
+  };
+
+  /** Ask once per run where results go; declining falls back to downloads. */
+  const chooseOutputFolder = async () => {
+    try {
+      outputRootRef.current = await pickOutputRoot();
+      sessionRef.current = null; // reopen under the newly chosen root
+      setExportError(null);
+    } catch (error) {
+      // An abort is the user changing their mind, not a failure to report.
+      if ((error as DOMException)?.name !== 'AbortError') {
+        setExportError(describeFailure(error));
+      }
+    }
+  };
+
+  const currentSession = async (): Promise<OutputSession> => {
+    if (!sessionRef.current) {
+      const folder = outputFolderName(pages[0]?.name);
+      sessionRef.current = await openOutputSession(folder, outputRootRef.current ?? undefined);
+    }
+    return sessionRef.current;
+  };
+
+  const exportActivePage = async () => {
+    if (!activePage?.imageUrl) return;
     setExportProcessing(true);
     setExportComplete(false);
+    setExportError(null);
 
-    // Simulate 1.5s content-aware erase & text render
-    setTimeout(() => {
-      setExportProcessing(false);
+    try {
+      const { blob } = await renderTranslatedPage(activePage.imageUrl, activePage.regions, {
+        uppercase: settings.uppercase,
+      });
+      const session = await currentSession();
+      const index = pages.findIndex((p) => p.id === activePage.id);
+      const fileName = pageFileName(Math.max(0, index), activePage.name);
+      await session.write(fileName, blob);
+
+      setExportedTo(
+        session.kind === 'directory'
+          ? `Results/${session.folderName}/${fileName}`
+          : `${fileName} (downloaded)`,
+      );
       setExportComplete(true);
-    }, 1800);
+      // An exported page is a finished page.
+      setPages((prev) => prev.map((p) => (p.id === activePage.id ? { ...p, isComplete: true, status: 'done' } : p)));
+    } catch (error) {
+      setExportError(describeFailure(error));
+    } finally {
+      setExportProcessing(false);
+    }
   };
 
-  // 9. TRIGGER DOWNLOAD AS IMAGE/PDF
-  const triggerImageDownload = () => {
-    // Generate simple simulated canvas download
-    const link = document.createElement('a');
-    link.download = `comic_translated_${activePageId}.png`;
-    // Create simple data URL representations or download an example
-    link.href = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400" viewBox="0 0 300 400"><rect width="100%" height="100%" fill="%23f5f5f4"/><text x="50" y="100" font-family="sans-serif" font-size="20" fill="%231c1917">COMIC TRANSLATION OUT</text></svg>';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    alert('Simulating LaMa Inpainting Layer Merge: Compiled translated page JPG successfully exported!');
-  };
+  const approvedCount = activePage?.regions.filter((r) => r.isApplied && !r.isHidden).length ?? 0;
+
+  const shellClass = `h-screen w-screen font-sans flex flex-col select-none overflow-hidden antialiased transition-colors duration-200 ${
+    theme === 'dark' ? 'bg-stone-950 text-stone-200' : 'bg-[#F3F4F6] text-gray-800'
+  }`;
+
+  // Nothing is loaded yet. There are no built-in pages any more: the input is
+  // whatever the user brings.
+  if (pages.length === 0) {
+    return (
+      <div className={`${shellClass} items-center justify-center`}>
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileChange}
+          accept="image/*"
+          multiple
+          className="hidden"
+        />
+        <div className="max-w-md px-6 text-center">
+          <h1 className="text-lg font-bold tracking-tight">Comic Translator</h1>
+          <p className={`mt-2 text-sm leading-relaxed ${theme === 'dark' ? 'text-stone-400' : 'text-gray-500'}`}>
+            Load up to {MAX_PAGES} pages. Nothing is written out until you approve it,
+            and each page you approve is saved on its own.
+          </p>
+          <div className="mt-6 flex items-center justify-center gap-2">
+            <button
+              onClick={handleUploadClicked}
+              className="rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-blue-700"
+            >
+              Choose images
+            </button>
+            <button
+              onClick={() => setShowSettings(true)}
+              className={`rounded-lg border px-4 py-2.5 text-xs font-semibold ${
+                theme === 'dark'
+                  ? 'border-stone-700 text-stone-300 hover:bg-stone-800'
+                  : 'border-gray-300 text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              {engineLabel}
+            </button>
+          </div>
+          {engineError && <p className="mt-4 text-xs text-red-500">{engineError}</p>}
+        </div>
+        {showSettings && (
+          <SettingsModal
+            settings={settings}
+            theme={theme}
+            onClose={() => setShowSettings(false)}
+            onSave={(next) => { setSettings(next); saveSettings(next); setShowSettings(false); }}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -503,6 +626,7 @@ export default function App() {
         ref={fileInputRef}
         onChange={handleFileChange}
         accept="image/*"
+        multiple
         className="hidden"
       />
 
@@ -512,7 +636,10 @@ export default function App() {
         onUploadClicked={handleUploadClicked}
         onExportClicked={handleExportClicked}
         onHelpClicked={() => setShowHelpModal(true)}
-        hasApiKey={hasApiKey}
+        onSettingsClicked={() => setShowSettings(true)}
+        engineLabel={engineLabel}
+        engineKind={settings.engine.kind}
+        engineReady={engineReady}
         theme={theme}
         onThemeChange={setTheme}
       />
@@ -736,94 +863,121 @@ export default function App() {
         </div>
       )}
 
-      {/* POPUP C: LAMA INPAINT & PILLOW COMPILE DIALOGUE */}
+      {/* POPUP C: WRITE THIS PAGE OUT */}
       {showExportModal && (
-        <div className="absolute inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center z-[90] p-4">
-          <div className={`border rounded-xl w-full max-w-xl shadow-2xl overflow-hidden transition-colors duration-205 ${
-            theme === 'dark' ? 'bg-stone-900 border-stone-800 text-stone-350' : 'bg-white border-gray-200 text-gray-750'
+        <div className="absolute inset-0 z-[90] flex items-center justify-center bg-gray-900/60 p-4 backdrop-blur-sm">
+          <div className={`w-full max-w-lg overflow-hidden rounded-xl border shadow-2xl ${
+            theme === 'dark' ? 'border-stone-700 bg-stone-900 text-stone-200' : 'border-gray-200 bg-white text-gray-800'
           }`}>
-            
-            <div className={`px-6 py-4 border-b flex items-center justify-between ${
-              theme === 'dark' ? 'bg-stone-950 border-stone-850' : 'bg-gray-55 border-gray-100'
+            <div className={`flex items-center justify-between border-b px-5 py-3.5 ${
+              theme === 'dark' ? 'border-stone-800 bg-stone-950' : 'border-gray-100 bg-gray-50'
             }`}>
-              <h2 className={`text-xs font-mono font-bold uppercase tracking-wider flex items-center gap-2 ${
-                theme === 'dark' ? 'text-stone-200' : 'text-gray-800'
-              }`}>
-                <RefreshCw size={14} className={exportProcessing ? 'animate-spin text-blue-500' : 'text-emerald-500'} />
-                CHAPTER COMPILATION EXPORT PIPELINE
+              <h2 className="flex items-center gap-2 font-mono text-xs font-bold uppercase tracking-wider">
+                <Download size={14} className={exportComplete ? 'text-emerald-500' : 'text-blue-500'} />
+                Export this page
               </h2>
               {!exportProcessing && (
-                <button
-                  onClick={() => setShowExportModal(false)}
-                  className={`p-1 ${theme === 'dark' ? 'text-stone-550 hover:text-stone-300' : 'text-gray-400 hover:text-gray-650'}`}
-                >
+                <button onClick={() => setShowExportModal(false)} aria-label="Close" className={theme === 'dark' ? 'text-stone-400' : 'text-gray-400'}>
                   <X size={16} />
                 </button>
               )}
             </div>
 
-            <div className={`p-6 text-center ${theme === 'dark' ? 'bg-stone-900' : 'bg-white'}`}>
-              {exportProcessing ? (
-                <div className="py-8 space-y-4">
-                  <div className="flex items-center justify-center space-x-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-bounce"></span>
-                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-bounce [animation-delay:0.2s]"></span>
-                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-bounce [animation-delay:0.4s]"></span>
-                  </div>
-                  <h3 className={`text-sm font-bold uppercase tracking-wider ${theme === 'dark' ? 'text-stone-200' : 'text-gray-805'}`}>Compiling Non-Destructive layers...</h3>
-                  <div className={`text-xs font-mono space-y-1.5 max-w-xs mx-auto text-left p-3 rounded-lg border ${
-                    theme === 'dark' ? 'bg-stone-950 border-stone-850 text-stone-400' : 'bg-gray-50 border-gray-200 text-gray-500'
-                  }`}>
-                    <p className="text-emerald-500 font-semibold">✔ 1. Collecting Approved Regions [Keep/Hide]</p>
-                    <p className="text-blue-500 font-semibold">⟳ 2. Executing LaMa Inpainting over mask zones...</p>
-                    <p className={theme === 'dark' ? 'text-stone-600' : 'text-gray-400'}>· 3. Spawning Pillow TTF font compiler...</p>
-                    <p className={theme === 'dark' ? 'text-stone-600' : 'text-gray-400'}>· 4. Exporting PNG raster data...</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="py-4 space-y-5">
-                  <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-2 border ${
-                    theme === 'dark' ? 'bg-emerald-950/20 text-emerald-400 border-emerald-800/40' : 'bg-emerald-50 text-emerald-600 border-emerald-100/50'
-                  }`}>
-                    <CheckCircle size={32} />
-                  </div>
-                  <div>
-                    <h3 className={`text-sm font-bold uppercase tracking-wider ${theme === 'dark' ? 'text-stone-250' : 'text-gray-800'}`}>LaMa Inpaint Compile Successful</h3>
-                    <p className={`text-xs mt-1.5 max-w-md mx-auto leading-relaxed ${theme === 'dark' ? 'text-stone-405' : 'text-gray-500 font-semibold'}`}>
-                      All approved text bubble coordinates have been content-erased (inpainted) on the original comic illustration. Pillow fonts have been rasterized as high-contrast layer vectors.
-                    </p>
-                  </div>
+            <div className="space-y-4 p-5">
+              <div className={`rounded-lg border p-3 font-mono text-[11px] leading-relaxed ${
+                theme === 'dark' ? 'border-stone-800 bg-stone-950 text-stone-400' : 'border-gray-200 bg-gray-50 text-gray-600'
+              }`}>
+                <p><span className="opacity-60">Page:</span> {activePage.name}</p>
+                <p><span className="opacity-60">Approved regions to set:</span> {approvedCount}</p>
+                <p><span className="opacity-60">Hidden regions:</span> {activePage.regions.filter((r) => r.isHidden).length}</p>
+                <p><span className="opacity-60">Folder:</span> Results/{outputFolderName(pages[0]?.name)}/</p>
+                <p><span className="opacity-60">Written as:</span> {pageFileName(Math.max(0, pages.findIndex((p) => p.id === activePage.id)), activePage.name)}</p>
+              </div>
 
-                  <div className={`p-3.5 rounded-lg border font-mono text-[11px] text-left max-w-sm mx-auto space-y-1 ${
-                    theme === 'dark' ? 'bg-stone-950 border-stone-850 text-stone-400' : 'bg-gray-50 border-gray-200 text-gray-600'
-                  }`}>
-                    <p><span className={theme === 'dark' ? 'text-stone-550' : 'text-gray-400'}>Active page:</span> {activePage.name}</p>
-                    <p><span className={theme === 'dark' ? 'text-stone-555' : 'text-gray-400'}>Inpainted elements:</span> {activePage.regions.filter(r => r.isApplied).length} regions</p>
-                    <p><span className={theme === 'dark' ? 'text-stone-555' : 'text-gray-400'}>Hidden / Erased elements:</span> {activePage.regions.filter(r => r.isHidden).length} regions</p>
-                    <p><span className={theme === 'dark' ? 'text-stone-555' : 'text-gray-400'}>Render Resolution:</span> Vector Rasterized (Lossless aspect)</p>
-                  </div>
-
-                  <div className="flex space-x-3 max-w-sm mx-auto pt-2">
-                    <button
-                      onClick={() => setShowExportModal(false)}
-                      className={`flex-1 py-2 px-3 border rounded-lg text-xs font-semibold cursor-pointer ${
-                        theme === 'dark' ? 'border-stone-800 hover:bg-stone-850 text-stone-400' : 'border-gray-200 hover:bg-gray-50 text-gray-600'
-                      }`}
-                    >
-                      Back to canvas
-                    </button>
-                    <button
-                      onClick={triggerImageDownload}
-                      className="flex-1 py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Download size={13} />
-                      <span>Download PNG</span>
-                    </button>
-                  </div>
-                </div>
+              {approvedCount === 0 && (
+                <p className={`rounded-lg border px-3 py-2 text-[11px] leading-relaxed ${
+                  theme === 'dark' ? 'border-amber-900/50 bg-amber-950/30 text-amber-300' : 'border-amber-200 bg-amber-50 text-amber-800'
+                }`}>
+                  No region on this page is approved yet, so the page will be written out unchanged.
+                  Approve the ones you want with “Apply Changes” first.
+                </p>
               )}
-            </div>
 
+              {supportsDirectoryOutput() ? (
+                <button
+                  onClick={chooseOutputFolder}
+                  disabled={exportProcessing}
+                  className={`w-full rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50 ${
+                    theme === 'dark' ? 'border-stone-700 hover:bg-stone-800' : 'border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  {outputRootRef.current ? `Folder chosen: ${outputRootRef.current.name}` : 'Choose where to save…'}
+                </button>
+              ) : (
+                <p className={`text-[11px] leading-relaxed ${theme === 'dark' ? 'text-stone-400' : 'text-gray-500'}`}>
+                  This browser cannot write into a folder you pick, so each page downloads on its own.
+                </p>
+              )}
+
+              {exportError && (
+                <p className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-[11px] text-red-700">{exportError}</p>
+              )}
+              {exportComplete && exportedTo && (
+                <p className="flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-800">
+                  <CheckCircle size={14} /> Written to {exportedTo}
+                </p>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowExportModal(false)}
+                  disabled={exportProcessing}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50 ${
+                    theme === 'dark' ? 'border-stone-700 text-stone-300 hover:bg-stone-800' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  Back to canvas
+                </button>
+                <button
+                  id="export-write-btn"
+                  onClick={exportActivePage}
+                  disabled={exportProcessing}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {exportProcessing ? <RefreshCw size={13} className="animate-spin" /> : <Download size={13} />}
+                  <span>{exportProcessing ? 'Writing…' : 'Write this page'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SETTINGS */}
+      {showSettings && (
+        <SettingsModal
+          settings={settings}
+          theme={theme}
+          onClose={() => setShowSettings(false)}
+          onSave={(next) => { setSettings(next); saveSettings(next); setShowSettings(false); }}
+        />
+      )}
+
+      {/* ENGINE PROGRESS AND FAILURES -- never silent, never invented */}
+      {(engineStatus || engineError) && (
+        <div className="pointer-events-none absolute bottom-24 left-1/2 z-[80] -translate-x-1/2">
+          <div className={`pointer-events-auto flex items-center gap-2 rounded-full border px-4 py-2 text-[11px] shadow-lg ${
+            engineError
+              ? 'border-red-300 bg-red-50 text-red-700'
+              : theme === 'dark' ? 'border-stone-700 bg-stone-900 text-stone-300' : 'border-gray-200 bg-white text-gray-600'
+          }`}>
+            {engineError ? <AlertTriangle size={13} /> : <RefreshCw size={13} className="animate-spin" />}
+            <span>{engineError ?? engineStatus}</span>
+            {engineError && (
+              <button onClick={() => setEngineError(null)} aria-label="Dismiss" className="ml-1 opacity-60">
+                <X size={12} />
+              </button>
+            )}
           </div>
         </div>
       )}

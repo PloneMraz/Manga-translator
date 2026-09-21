@@ -213,7 +213,11 @@ export const Canvas: React.FC<CanvasProps> = ({
   return (
     <div
       id="canvas-container-outer"
-      className={`flex-1 p-6 flex items-center justify-center overflow-auto relative transition-colors duration-200 ${
+      // Centring with `items-center` clips the top of a page taller than this
+      // box and makes it unscrollable, so the first rows of a tall page cannot
+      // be reached or drawn on. Auto margins on the child centre it *and*
+      // leave the overflow scrollable in both directions.
+      className={`flex-1 p-6 flex overflow-auto relative transition-colors duration-200 ${
         theme === 'dark' ? 'bg-stone-900' : 'bg-[#F3F4F6]'
       }`}
     >
@@ -225,7 +229,7 @@ export const Canvas: React.FC<CanvasProps> = ({
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        className={`relative max-w-full aspect-[3/4] bg-white shadow-2xl transition-transform duration-200 ${
+        className={`relative m-auto shrink-0 max-w-full aspect-[3/4] bg-white shadow-2xl transition-transform duration-200 ${
           activeTool === 'pan' ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'
         }`}
         style={{
