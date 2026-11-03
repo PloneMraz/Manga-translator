@@ -35,7 +35,7 @@ keeps its edit history.
   URL. A session link is a capability, not a citation: whoever holds it may be
   able to read the whole conversation.
 - **Never publish the owner's personal data**: a real name beyond the public
-  GitHub identity (Plone Mraz), email, bank or payment identifiers, account
+  GitHub identity (Plone Mraz), bank or payment identifiers, account
   screenshots, balances, or the contents of private notes — including in file
   metadata (the author fields of docx, pdf and xlsx files; the EXIF of images).
   His real name is not among them where he signs as an author (Plone,
