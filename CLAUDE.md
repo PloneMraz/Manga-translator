@@ -38,6 +38,10 @@ keeps its edit history.
   GitHub identity (Plone Mraz), email, bank or payment identifiers, account
   screenshots, balances, or the contents of private notes — including in file
   metadata (the author fields of docx, pdf and xlsx files; the EXIF of images).
+  His real name is not among them where he signs as an author (Plone,
+  2026-11-03): "Huỳnh Mai Phúc (Plone Mraz)" (`Huynh, Mai Phuc`), with his
+  affiliation and ORCID, may stand in citation metadata — `CITATION.cff`, a
+  README's BibTeX, a DOI record — and in a document's author line or field.
 - **One trailer only**: `Co-Authored-By: Claude <the model doing the work>
   <noreply@anthropic.com>`, and on a pull request the footer
   `Generated with [Claude Code](https://claude.com/claude-code)`. No other
