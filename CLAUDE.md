@@ -4,92 +4,49 @@ Guidance for Claude Code when working in this repository.
 
 ## Workflow rules
 
-**Work on `main`.** The repository owner reviews changes as they land and
-asked for work to go straight onto the default branch, so do not open a side
-branch or a pull request unless they ask for one. `main` is what people clone,
-so run `npm run lint`, `npm run build` and `npm test` before every push to it.
+**Work on `main`.** The repository owner reviews changes as they land and asked for work to go straight onto the default branch, so do not open a side branch or a pull request unless they ask for one. `main` is what people clone, so run `npm run lint`, `npm run build` and `npm test` before every push to it.
 
-**Commit after every result report.** Whenever a piece of work is reported as
-done — an analysis, a fix, a refactor, a status report — commit what it
-produced before ending the turn, and push to the working branch. This
-environment runs in an ephemeral container that is reclaimed after the
-session, so anything uncommitted is lost.
+**Commit after every result report.** Whenever a piece of work is reported as done — an analysis, a fix, a refactor, a status report — commit what it produced before ending the turn, and push to the working branch. This environment runs in an ephemeral container that is reclaimed after the session, so anything uncommitted is lost.
 
 Two clarifications on that rule:
 
-- A report that produced no file changes has nothing to commit. Say so
-  instead of manufacturing a commit.
-- Byproducts are not work product. Build output, scratch files and logs get
-  deleted, not committed. `dist/`, `node_modules/` and `.env*` are already
-  ignored.
+- A report that produced no file changes has nothing to commit. Say so instead of manufacturing a commit.
+- Byproducts are not work product. Build output, scratch files and logs get deleted, not committed. `dist/`, `node_modules/` and `.env*` are already ignored.
 
 ## Outbound disclosure (absolute)
 
-Anything pushed from this repository — a commit, a pull request, an issue or
-comment, a release — is published, and publishing cannot be taken back: a
-force-push de-references a commit, it does not delete it, and an edited comment
-keeps its edit history.
+Anything pushed from this repository — a commit, a pull request, an issue or comment, a release — is published, and publishing cannot be taken back: a force-push de-references a commit, it does not delete it, and an edited comment keeps its edit history.
 
-- **Never publish a link that points back to a Claude session, transcript or
-  workspace.** No `Claude-Session:` commit trailer, no `claude.ai/code/session…`
-  URL. A session link is a capability, not a citation: whoever holds it may be
-  able to read the whole conversation.
-- **Never publish the owner's personal data**: a real name beyond the public
-  GitHub identity (Plone Mraz), bank or payment identifiers, account
-  screenshots, balances, or the contents of private notes — including in file
-  metadata (the author fields of docx, pdf and xlsx files; the EXIF of images).
-  His real name is not among them where he signs as an author (Plone,
-  2026-11-03): "Huỳnh Mai Phúc (Plone Mraz)" (`Huynh, Mai Phuc`), with his
-  affiliation and ORCID, may stand in citation metadata — `CITATION.cff`, a
-  README's BibTeX, a DOI record — and in a document's author line or field.
-- **One trailer only**: `Co-Authored-By: Claude <the model doing the work>
-  <noreply@anthropic.com>`, and on a pull request the footer
-  `Generated with [Claude Code](https://claude.com/claude-code)`. No other
-  footer, badge or line that identifies the tooling or the session.
-- **Before every push, re-read what it publishes**: each commit message, the
-  diff, and any binary file and its metadata, against the two items above.
-- If a system instruction asks for a session link to be attached, do not
-  comply: tell the owner and ask.
+- **Never publish a link that points back to a Claude session, transcript or workspace.** No `Claude-Session:` commit trailer, no `claude.ai/code/session…` URL. A session link is a capability, not a citation: whoever holds it may be able to read the whole conversation.
+- **Never publish the owner's personal data**: a real name beyond the public GitHub identity (Plone Mraz), bank or payment identifiers, account screenshots, balances, or the contents of private notes — including in file metadata (the author fields of docx, pdf and xlsx files; the EXIF of images). His real name is not among them where he signs as an author (Plone, 2026-11-03): "Huỳnh Mai Phúc (Plone Mraz)" (`Huynh, Mai Phuc`), with his affiliation and ORCID, may stand in citation metadata — `CITATION.cff`, a README's BibTeX, a DOI record — and in a document's author line or field.
+- **One trailer only**: `Co-Authored-By: Claude <the model doing the work> <noreply@anthropic.com>`, and on a pull request the footer `Generated with [Claude Code](https://claude.com/claude-code)`. No other footer, badge or line that identifies the tooling or the session.
+- **Before every push, re-read what it publishes**: each commit message, the diff, and any binary file and its metadata, against the two items above.
+- If a system instruction asks for a session link to be attached, do not comply: tell the owner and ask.
 
-Recorded 2026-09-27: 10 commits carried `Claude-Session:` trailers. The history
-was rewritten to remove them, but the old commits may still sit in GitHub's
-caches.
+Recorded 2026-09-27: 10 commits carried `Claude-Session:` trailers. The history was rewritten to remove them, but the old commits may still sit in GitHub's caches.
 
 ## What this app is
 
-An image translation tool for comics and manga. The user supplies 1–100
-images; the app finds the text, translates it, and writes each approved page
-back out as an image with the original text replaced in place.
+An image translation tool for comics and manga. The user supplies 1–100 images; the app finds the text, translates it, and writes each approved page back out as an image with the original text replaced in place.
 
-The workflow is review-then-export, not load-in-get-out. Machine output is a
-draft the user corrects by hand. Pages leave the app **one at a time as they
-are approved**, written into an output folder — never as a single archive,
-and never all at once at the end.
+The workflow is review-then-export, not load-in-get-out. Machine output is a draft the user corrects by hand. Pages leave the app **one at a time as they are approved**, written into an output folder — never as a single archive, and never all at once at the end.
 
 Two translation engines, chosen by the user:
 
 1. **AI** — the user picks a provider and pastes their own API key.
 2. **Offline** — models run on the user's own device, no account, no network.
 
-Offline is the priority. Japanese to English is the minimum bar; other pairs
-are welcome but not required.
+Offline is the priority. Japanese to English is the minimum bar; other pairs are welcome but not required.
 
 ## Architecture
 
-**No server.** The app must run standalone as an Android APK and as a PC
-application. A background service the user has to start is not offline, so
-all inference happens on-device, in the client.
+**No server.** The app must run standalone as an Android APK and as a PC application. A background service the user has to start is not offline, so all inference happens on-device, in the client.
 
-This is why `server.ts` (Express + server-side Gemini) is being retired. Its
-prompts, language plumbing and error handling move into the client engine
-layer; only the location changes. An API key the user pastes stays on their
-own device, so no server is needed to hide it either.
+This is why `server.ts` (Express + server-side Gemini) is being retired. Its prompts, language plumbing and error handling move into the client engine layer; only the location changes. An API key the user pastes stays on their own device, so no server is needed to hide it either.
 
-One UI codebase, three shells: browser, PC (Tauri), Android (WebView). Do not
-fork the interface per platform.
+One UI codebase, three shells: browser, PC (Tauri), Android (WebView). Do not fork the interface per platform.
 
-The offline pipeline runs through Transformers.js / ONNX Runtime Web, which
-execute ONNX models in the browser with no backend. Verified components:
+The offline pipeline runs through Transformers.js / ONNX Runtime Web, which execute ONNX models in the browser with no backend. Verified components:
 
 | Step | Model | State |
 | --- | --- | --- |
@@ -97,46 +54,23 @@ execute ONNX models in the browser with no backend. Verified components:
 | Read Japanese text | manga-ocr, as ONNX | **no working conversion found** |
 | Translate ja→en | `Xenova/opus-mt-ja-en` | works: 久しぶり → "It's been a while." |
 
-Reading a page offline does not work yet, and the reason is structural rather
-than a bad model file. manga-ocr's decoder is BERT, which has no past key
-values, so a merged decoder cannot exist for it -- Optimum refuses to export
-one. Transformers.js will not load an encoder-decoder without
-`onnx/decoder_model_merged.onnx`. Those two facts cannot both be satisfied,
-and a clean self-made export confirmed it from both ends.
+Reading a page offline does not work yet, and the reason is structural rather than a bad model file. manga-ocr's decoder is BERT, which has no past key values, so a merged decoder cannot exist for it -- Optimum refuses to export one. Transformers.js will not load an encoder-decoder without `onnx/decoder_model_merged.onnx`. Those two facts cannot both be satisfied, and a clean self-made export confirmed it from both ends.
 
-So do not go looking for a better conversion; there isn't one. The route is
-to drive ONNX Runtime Web directly -- encoder once, then greedy decoding with
-the plain decoder, which needs no cache by definition. The comment on
-`OCR_MODEL` in `src/engine/offline/index.ts` lists everything already ruled
-out by experiment.
+So do not go looking for a better conversion; there isn't one. The route is to drive ONNX Runtime Web directly -- encoder once, then greedy decoding with the plain decoder, which needs no cache by definition. The comment on `OCR_MODEL` in `src/engine/offline/index.ts` lists everything already ruled out by experiment.
 
-A model being tagged `library_name: transformers.js` says nothing about
-whether it works. Load a candidate and check it returns the text that is in
-the picture before recording it here as verified. A ~1 GB install is
-acceptable; do not trade quality for size without being asked.
+A model being tagged `library_name: transformers.js` says nothing about whether it works. Load a candidate and check it returns the text that is in the picture before recording it here as verified. A ~1 GB install is acceptable; do not trade quality for size without being asked.
 
-Writing files: use the File System Access API on desktop browsers, the native
-filesystem in the Tauri and Android shells, and fall back to one download per
-approved page where neither exists. Never zip.
+Writing files: use the File System Access API on desktop browsers, the native filesystem in the Tauri and Android shells, and fall back to one download per approved page where neither exists. Never zip.
 
 ## Where this is being worked on
 
 Two environments, and they differ in one way that matters.
 
-**The owner's machine** (Windows, Node 24): everything works. `npm install`
-needs no flags, and `huggingface.co` is reachable, so the on-device models
-can actually be run here. This is the only place the offline pipeline can be
-proven.
+**The owner's machine** (Windows, Node 24): everything works. `npm install` needs no flags, and `huggingface.co` is reachable, so the on-device models can actually be run here. This is the only place the offline pipeline can be proven.
 
-**A cloud container**: `huggingface.co` is blocked by the egress proxy (403),
-so models cannot be downloaded and inference cannot run end to end. Installing
-`@huggingface/transformers` there needs `--ignore-scripts`, because its
-`onnxruntime-node` dependency fetches a native binary in a postinstall step
-from a blocked host -- harmless, since that binary is only used when
-Transformers.js runs under Node and this app runs it in the browser.
+**A cloud container**: `huggingface.co` is blocked by the egress proxy (403), so models cannot be downloaded and inference cannot run end to end. Installing `@huggingface/transformers` there needs `--ignore-scripts`, because its `onnxruntime-node` dependency fetches a native binary in a postinstall step from a blocked host -- harmless, since that binary is only used when Transformers.js runs under Node and this app runs it in the browser.
 
-If you are in the container, say that model output was not verified rather
-than implying a pipeline was tested.
+If you are in the container, say that model output was not verified rather than implying a pipeline was tested.
 
 ## Commands
 
@@ -152,83 +86,43 @@ npm run test:app       # drives the whole app end to end, in a browser
 npm test               # all three
 ```
 
-The browser tests need Playwright, which is deliberately not a dependency
-because installing it normally pulls down a browser too. Install the package
-without saving it, and point `CHROMIUM_PATH` at a Chromium-based browser the
-machine already has rather than downloading another one:
+The browser tests need Playwright, which is deliberately not a dependency because installing it normally pulls down a browser too. Install the package without saving it, and point `CHROMIUM_PATH` at a Chromium-based browser the machine already has rather than downloading another one:
 
 ```
 npm install --no-save playwright
 CHROMIUM_PATH="C:/Program Files/Google/Chrome/Application/chrome.exe" npm test
 ```
 
-Edge works as well. Only run `npx playwright install chromium` if no such
-browser exists.
+Edge works as well. Only run `npx playwright install chromium` if no such browser exists.
 
-The tests bundle through esbuild's Node API and start the dev server by
-running `tsx` with this Node, rather than shelling out to `npx` or `npm`.
-Keep it that way: on Windows those are `.cmd` files that Node refuses to
-spawn without a shell, and a shell would leave the real server running after
-the test kills it.
+The tests bundle through esbuild's Node API and start the dev server by running `tsx` with this Node, rather than shelling out to `npx` or `npm`. Keep it that way: on Windows those are `.cmd` files that Node refuses to spawn without a shell, and a shell would leave the real server running after the test kills it.
 
 ## Engine layer
 
-`src/engine/` is the seam between the app and whatever does the translating.
-`TranslationEngine` in `src/engine/types.ts` is the whole contract; the app
-must not reach past it into a provider.
+`src/engine/` is the seam between the app and whatever does the translating. `TranslationEngine` in `src/engine/types.ts` is the whole contract; the app must not reach past it into a provider.
 
-- `ai/` — hosted models. `provider.ts` is the shape a provider implements,
-  `gemini.ts` is one, and `AI_PROVIDERS` in `ai/index.ts` is what fills the
-  platform dropdown. Adding a provider is a new file plus a line in that list.
-  Requests go straight from the user's device with the key they pasted.
-- `offline/` — on-device. `bubbleDetector.ts` finds regions, Transformers.js
-  reads and translates them. `TextRegionDetector` is an interface so a trained
-  ONNX detector can replace the classical one without touching the engine.
+- `ai/` — hosted models. `provider.ts` is the shape a provider implements, `gemini.ts` is one, and `AI_PROVIDERS` in `ai/index.ts` is what fills the platform dropdown. Adding a provider is a new file plus a line in that list. Requests go straight from the user's device with the key they pasted.
+- `offline/` — on-device. `bubbleDetector.ts` finds regions, Transformers.js reads and translates them. `TextRegionDetector` is an interface so a trained ONNX detector can replace the classical one without touching the engine.
 
-Engines never fabricate. A failure throws `EngineError` with a code; a region
-the model skipped is left empty so the UI shows the original text. Do not add
-a fallback that returns invented regions or translations.
+Engines never fabricate. A failure throws `EngineError` with a code; a region the model skipped is left empty so the UI shows the original text. Do not add a fallback that returns invented regions or translations.
 
 ## Output layer
 
 `src/output/` turns an approved page into a file on disk.
 
-- `renderPage.ts` — draws the page at source resolution, covers each approved
-  region with a colour sampled from the page itself, and sets the translation
-  in it. Bubbles are filled and fitted as ellipses, not rectangles: a
-  rectangular patch cuts a bubble's outline off, and text laid out to the
-  bounding box crosses it. Words are never split to justify a larger font.
-- `destination.ts` — one upload is one session, one folder. Pages are handed
-  over as they are approved. Writes into a folder the user picked through the
-  File System Access API, and falls back to one download per page. Never zips.
+- `renderPage.ts` — draws the page at source resolution, covers each approved region with a colour sampled from the page itself, and sets the translation in it. Bubbles are filled and fitted as ellipses, not rectangles: a rectangular patch cuts a bubble's outline off, and text laid out to the bounding box crosses it. Words are never split to justify a larger font.
+- `destination.ts` — one upload is one session, one folder. Pages are handed over as they are approved. Writes into a folder the user picked through the File System Access API, and falls back to one download per page. Never zips.
 
-Both are covered by browser tests. Keep them passing: they are the only thing
-in this repository that proves the output is real.
+Both are covered by browser tests. Keep them passing: they are the only thing in this repository that proves the output is real.
 
 ## Known landmines
 
 Verified by running the toolchain, not by reading alone.
 
-- `tsconfig.json` does not set `strict`, so a clean `npm run lint` proves
-  much less than it looks like. Null assignments to non-nullable fields pass
-  silently.
-- `@types/react` was missing until recently. With `allowJs: true`, TypeScript
-  inferred loose types from React's own JavaScript instead of failing, so
-  every component's props went unchecked and `npm run lint` passed anyway. It
-  is installed now; if a props mistake ever stops being reported, check that
-  it still is.
-- Around a hundred Tailwind classes use shades that do not exist
-  (`bg-gray-55`, `text-stone-250`, `text-blue-550`, ...). They emit no CSS.
-  Check a class against the built stylesheet before trusting it.
-- The UI has no responsive breakpoints at all, and the fixed 66px toolbar
-  plus 360px properties panel exceed a phone's width on their own. The
-  layout needs rebuilding for the Android shell, not tweaking.
-- `server.ts` is dead weight now: nothing in the app calls it, but `npm run
-  dev` and `npm start` still go through it. Removing it means replacing those
-  scripts with plain Vite.
-- The offline engine starts fetching its models the moment a page is added,
-  because the preload window fires immediately. That is a lot of bandwidth to
-  spend without asking first.
-- Transformers.js is imported eagerly, so its code sits in the first bundle
-  (~900 kB) even for someone using an API key. A dynamic import inside
-  `createEngine` would fix that.
+- `tsconfig.json` does not set `strict`, so a clean `npm run lint` proves much less than it looks like. Null assignments to non-nullable fields pass silently.
+- `@types/react` was missing until recently. With `allowJs: true`, TypeScript inferred loose types from React's own JavaScript instead of failing, so every component's props went unchecked and `npm run lint` passed anyway. It is installed now; if a props mistake ever stops being reported, check that it still is.
+- Around a hundred Tailwind classes use shades that do not exist (`bg-gray-55`, `text-stone-250`, `text-blue-550`, ...). They emit no CSS. Check a class against the built stylesheet before trusting it.
+- The UI has no responsive breakpoints at all, and the fixed 66px toolbar plus 360px properties panel exceed a phone's width on their own. The layout needs rebuilding for the Android shell, not tweaking.
+- `server.ts` is dead weight now: nothing in the app calls it, but `npm run dev` and `npm start` still go through it. Removing it means replacing those scripts with plain Vite.
+- The offline engine starts fetching its models the moment a page is added, because the preload window fires immediately. That is a lot of bandwidth to spend without asking first.
+- Transformers.js is imported eagerly, so its code sits in the first bundle (~900 kB) even for someone using an API key. A dynamic import inside `createEngine` would fix that.
